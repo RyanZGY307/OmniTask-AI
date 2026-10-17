@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/client-conversation"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_CONVERSATION")
+}
+
+// ============================================================
+// Conversation — conversation
+// Models: CONVERSATION
+// ============================================================
+
+model Conversation {
+  id        String    @id @default(cuid())
+  title     String    @default("新对话")
+  userId    String
+  isPinned  Boolean   @default(false)
+  safetyWarnings Int @default(0)
+  isSafetyFlagged Boolean @default(false)
+  // 受限事项历史：每次敏感命中的标签数组的 JSON 数组（只保留最近 50 次）。
+  // 用于按“同一受限事项”累计警告次数（无关话题不继承计数）。
+  safetyTopicHistory String @default("[]")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  messageType    String       @default("text")
+  model          String?
+  mode           String?
+  metadata       String?
+  tokenCount     Int          @default(0)
+  creditsCost    Float        @default(0)
+  createdAt      DateTime     @default(now())
+}
+
+// ============================================================
+// FlaggedConversation — 敏感对话标记（拒绝时落档快照）
+// messagesJson: 最近 N 对用户与 AI 消息的 JSON 数组 [{role,content}]
+// ============================================================
+
+model FlaggedConversation {
+  id             String       @id @default(cuid())
+  userId         String
+  username       String       @default("")
+  conversationId String
+  level          String       // "medium" | "high"
+  reason         String?
+  model          String?
+  warningCount   Int          @default(0)
+  uploadedPairs  Int          @default(0)
+  messagesJson   String       @default("[]")
+  // 触发本次标记的用户消息 id：同一消息重试只落一条档（幂等键）
+  sourceMessageId String?     @unique
+  // 命中的敏感标签（逗号分隔），用于按“同一受限事项”累计警告次数
+  topics          String?
+  // 落档实际结果：pending 写入中 / ok 已提交 / failed 提交失败（拒绝本身不受影响）
+  uploadStatus    String      @default("ok")
+  // 数据保留期限：到期由清理任务删除（默认 180 天，见 SAFETY_FLAG_RETENTION_DAYS）
+  retentionUntil DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([conversationId])
+  @@index([retentionUntil])
+}

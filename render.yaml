@@ -1,0 +1,62 @@
+# ================================================================
+# OmniTask — Render deploy config
+#
+# Backend is PostgreSQL (all 5 Prisma schemas + services/db.ts target PG).
+# Before the service can start you MUST set the 4 DATABASE_URL_* values
+# below to real postgresql:// connections (in this file or in the
+# Render dashboard). They are placeholders now.
+#
+#   - One Postgres instance hosting 4 databases:
+#       cortex_user / cortex_conversation / cortex_knowledge / cortex_overflow
+#   - If the target is a managed/pooler service that requires SSL,
+#     append  ?sslmode=require  to each URL.
+# ================================================================
+services:
+  - type: web
+    name: cortex-server
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install && npm run build
+    # DB URLs come from the envVars below — do NOT re-export them here,
+    # a shell export would override the env values and break startup.
+    startCommand: node dist/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: PORT
+        value: "10000"
+      - key: NODE_ENV
+        value: production
+      # ---- PostgreSQL (4 datasources; REQUIRED for boot) ----
+      # Replace the <...> placeholders with your real credentials.
+      - key: DATABASE_URL_USER
+        value: "postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>:5432/cortex_user"
+      - key: DATABASE_URL_CONVERSATION
+        value: "postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>:5432/cortex_conversation"
+      - key: DATABASE_URL_KNOWLEDGE
+        value: "postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>:5432/cortex_knowledge"
+      - key: DATABASE_URL_OVERFLOW
+        value: "postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>:5432/cortex_overflow"
+      - key: CLIENT_URL
+        value: https://cortex-ai-omega-lemon.vercel.app
+      - key: JWT_SECRET
+        generateValue: true
+      - key: VAULT_KEY
+        generateValue: true
+      - key: GITHUB_API_BASE
+        value: https://api.github.com
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        value: admin@example.com
+      - key: ADMIN_PASSWORD
+        value: change-me
+      # ---- Provider API keys are NO LONGER deployment variables. ----
+      # They are entered in the admin UI at /admin/models and stored in
+      # the user DB (ProviderConnection table). On first boot after the
+      # cutover, any legacy keys found in env vars are seeded into the DB
+      # once, after which the env vars can be removed entirely.

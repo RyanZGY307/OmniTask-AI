@@ -1,0 +1,2281 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/client-user"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_USER")
+}
+
+// ============================================================
+// User — user
+// Models: USER
+// ============================================================
+
+model User {
+  id               String           @id @default(cuid())
+  email            String           @unique
+  username         String           @unique
+  passwordHash     String
+  avatar           String?
+  region           String           @default("CN")
+  language         String           @default("zh-CN")
+  currency         String           @default("USD")
+role String @default("USER")
+ subscriptionTier String @default("STANDARD")
+  subscriptionEnd  DateTime?
+  isActive         Boolean          @default(true)
+  creditBalance    Float            @default(0)
+  frozenCredits    Float            @default(0)
+  bonusCreditsUsed Float            @default(0)
+  dailyThinkUsed   Int              @default(0)
+  dailyThinkReset  DateTime         @default(now())
+  dailyVideoUsed   Int              @default(0)
+  dailyVideoReset  DateTime         @default(now())
+  dailyResearchUsed  Int            @default(0)
+  dailyResearchReset DateTime       @default(now())
+  evoSignalsToday  Int              @default(0)
+  evoSignalsReset  DateTime         @default(now())
+  evolutionOptOut  Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  // ===== Existing relations =====
+  settings           UserSetting?
+  memoryEntries      MemoryEntry[]
+  creditTransactions CreditTransaction[]
+  creditBatches      CreditBatch[]
+  orders             PaymentOrder[]
+  logs               LogEntry[]
+  modelUsage         ModelUsage[]
+  feedbacks          Feedback[]
+
+  // ===== Memory Runtime relations =====
+  userProfile        UserProfile?
+  userPreferences    UserPreference[]
+  userRequirements   UserRequirement[]
+  userHabits         UserHabit[]
+  userInterests      UserInterest[]
+  domainProfiles     DomainProfile[]
+  languageProfiles   LanguageProfile[]
+  longTermMemories   LongTermMemory[]
+  fileRecords        FileRecord[]
+  payments           Payment[]
+  creditLedgers      CreditLedger[]
+  providerIdentities PaymentProviderIdentity[]
+  expressionProfile  ExpressionProfile?
+}
+
+model UserSetting {
+  id                     String  @id @default(cuid())
+  userId                 String  @unique
+  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultModel           String  @default("auto")
+  defaultMode            String  @default("standard")
+  theme                  String  @default("dark")
+  enableVoice            Boolean @default(true)
+  enableSearch           Boolean @default(true)
+  teacherStyle           String  @default("guided")
+  autoModelPool          String?
+  modeModelPreferences   String?
+  glassBlur              Int     @default(12)
+  glassOpacity           Float   @default(0.06)
+  glassBorderOpacity     Float   @default(0.12)
+  glassRefraction        Int     @default(20)
+  glassSaturate          Float   @default(1.8)
+  glassHighlightOpacity  Float   @default(0.15)
+  glassEnabled           Boolean @default(true)
+  actionPolicies         String? @default("{}")
+}
+
+model AdminInvite {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  email     String?
+  usedBy    String?
+  isUsed    Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model MemoryEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  level     Int      @default(1)
+  category  String
+  content   String
+  source    String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CreditTransaction {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount      Float
+  balance     Float
+  type        String
+  description String?
+  model       String?
+  createdAt   DateTime @default(now())
+}
+
+model CreditBatch {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount      Float
+  remaining   Float
+  source      String
+  description String?
+  expiryDate  DateTime
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  @@index([userId, isActive, expiryDate])
+}
+
+model CreditPack {
+  id       String  @id @default(cuid())
+  credits  Float
+  price    Float
+  currency String  @default("USD")
+  isActive Boolean @default(true)
+}
+
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  base      String   @default("USD")
+  target    String
+  rate      Float
+  fetchedAt DateTime @default(now())
+  @@unique([base, target])
+}
+
+model PaymentOrder {
+  id              String              @id @default(cuid())
+  orderId         String              @unique
+  pricingVersionId  String?
+  lockedCredits     Int?
+  lockedPriceUsd    Float?
+  creditGranted     Boolean  @default(false)
+  creditGrantedAt   DateTime?
+  creditValidDays   Int?
+  fxVersionId       String?
+  providerPricingVersionId String?
+  creditPricingVersionId   String?
+  userId          String
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan            String
+  expectedAmount  Float
+  currency        String              @default("USD")
+  paymentMethod   String
+  recipient       String
+status String @default("AWAITING_PAYMENT")
+  verifiedTotal   Float               @default(0)
+  remainingAmount Float               @default(0)
+  expiresAt       DateTime
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  transactions    PaymentTransaction[]
+  proofs          PaymentProof[]
+  reviews         PaymentReview[]
+  auditLogs       PaymentAuditLog[]
+  payments        Payment[]
+  attributions    PaymentAttribution[]
+  @@index([userId, status])
+}
+
+model PaymentTransaction {
+  id              String        @id @default(cuid())
+  orderId         String
+  order           PaymentOrder  @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  transactionId   String        @unique
+  paymentMethod   String
+  amount          Float
+  currency        String
+  recipient       String
+  transactionTime DateTime
+  providerStatus  String?
+  referenceId     String?
+  proofId         String?
+  verifiedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  @@index([orderId])
+  @@index([transactionId])
+}
+
+model PaymentProof {
+  id              String        @id @default(cuid())
+  orderId         String
+  order           PaymentOrder  @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  userId          String
+  fileUrl         String
+  fileHash        String
+  perceptualHash  String?
+  ocrResult       String?
+  walletType      String?
+  hasObstruction  Boolean       @default(false)
+  uploadTime      DateTime      @default(now())
+  createdAt       DateTime      @default(now())
+  @@index([orderId])
+  @@index([fileHash])
+}
+
+model PaymentReview {
+  id              String         @id @default(cuid())
+  orderId         String
+  order           PaymentOrder  @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  proofId         String?
+  decision        String
+  aiOutput        String?
+  riskScore       Float          @default(0)
+  reason          String?
+  reviewedAt      DateTime       @default(now())
+  @@index([orderId])
+}
+
+model PaymentAuditLog {
+  id        String        @id @default(cuid())
+  orderId   String
+  order     PaymentOrder @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  action    String
+  detail    String?
+  createdAt DateTime      @default(now())
+  @@index([orderId, createdAt])
+}
+
+model PaymentQRCode {
+  id        String   @id @default(cuid())
+  method    String   @unique
+  imageUrl  String
+  isActive  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+}
+
+model LogEntry {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  level     String   @default("INFO")
+  action    String
+  detail    String?
+  model     String?
+  duration  Int?
+  tokens    Int?
+  credits   Float?
+  createdAt DateTime @default(now())
+}
+
+model ModelUsage {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model      String
+  tokenCount Int      @default(0)
+  credits    Float    @default(0)
+  callCount  Int      @default(0)
+  date       DateTime @default(now())
+}
+
+model Feedback {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String   @default("bug")
+  title       String
+  content     String
+  attachments String?
+  status      String   @default("pending")
+  reply       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model RequestTrace {
+  id                      String        @id
+  requestId               String        @unique
+  userId                  String?
+  conversationId          String?
+  messageId               String?
+  parentMessageId         String?
+
+  createdAt               DateTime      @default(now())
+  startedAt               DateTime?
+  completedAt             DateTime?
+  durationMs              Int?
+
+  environment             String?
+  client                  String?
+  appVersion              String?
+  region                  String?
+status String @default("QUEUED")
+
+  requestedModel          String?
+  selectedModel           String?
+  provider                String?
+  modelVersion            String?
+  mode                    String?
+
+  routingMode             String?
+  routingPolicy           String?
+  candidateModels         String?
+  selectionReason         String?
+
+  inputTokens             Int?
+  cachedInputTokens       Int?
+  cacheWriteTokens        Int?
+  outputTokens            Int?
+  reasoningTokens         Int?
+  toolInputTokens         Int?
+  toolOutputTokens        Int?
+  totalTokens             Int?
+  providerRawUsage        String?
+
+  contextTokens           Int?
+  systemPromptTokens      Int?
+  conversationHistoryTokens Int?
+  retrievalTokens         Int?
+  toolContextTokens       Int?
+  attachmentTokens        Int?
+  userInputTokens         Int?
+
+  requestStartedAt        DateTime?
+  streamStartedAt         DateTime?
+  firstTokenAt            DateTime?
+  streamCompletedAt       DateTime?
+  finalResponseAt         DateTime?
+  ttftMs                  Int?
+  streamDurationMs        Int?
+  streamInterrupted       Boolean       @default(false)
+  streamInterruptionReason String?
+
+  inputCostUsd            Float?
+  cachedInputCostUsd      Float?
+  outputCostUsd           Float?
+  toolCostUsd             Float?
+  totalApiCostUsd         Float?
+  pricingVersion          String?
+
+  creditsBefore           Float?
+  creditsReserved         Float?
+  creditsCharged          Float?
+  creditsRefunded         Float?
+  creditsAfter            Float?
+  creditPricingVersion    String?
+
+  finishReason            String?
+  cancelledBy             String?
+  cancelledAt             DateTime?
+
+  promptVersion           String?
+  routerVersion           String?
+
+  events                  Event[]
+  modelCalls              ModelCall[]
+  toolCalls               ToolCall[]
+  errors                  ErrorLog[]
+  billingTransactions     BillingTransaction[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([createdAt])
+  @@index([selectedModel])
+  @@index([conversationId])
+}
+
+model Event {
+  id              String    @id @default(cuid())
+  traceId         String
+  trace           RequestTrace @relation(fields: [traceId], references: [id], onDelete: Cascade)
+  requestId       String?
+  userId          String?
+  eventType       String
+  timestamp       DateTime  @default(now())
+  status          String?
+  durationMs      Int?
+  payload         String?
+  errorId         String?
+  version         String?
+
+  @@index([traceId, eventType])
+  @@index([timestamp])
+  @@index([eventType, timestamp])
+}
+
+model ModelCall {
+  id              String    @id @default(cuid())
+  traceId         String
+  trace           RequestTrace @relation(fields: [traceId], references: [id], onDelete: Cascade)
+  provider        String?
+  requestedModel  String?
+  selectedModel   String?
+  modelVersion    String?
+  mode            String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMs      Int?
+  status          String?
+  inputTokens     Int?
+  outputTokens    Int?
+  totalTokens     Int?
+  cachedTokens    Int?
+  reasoningTokens Int?
+  providerRawUsage String?
+  inputCostUsd    Float?
+  outputCostUsd   Float?
+  totalCostUsd    Float?
+  finishReason    String?
+  httpStatus      Int?
+  errorMessage    String?
+
+  @@index([traceId])
+  @@index([selectedModel, status])
+}
+
+model ToolCall {
+  id              String    @id @default(cuid())
+  traceId         String
+  trace           RequestTrace @relation(fields: [traceId], references: [id], onDelete: Cascade)
+  toolCallId      String?
+  toolName        String?
+  toolVersion     String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMs      Int?
+  status          String?
+  inputSize       Int?
+  outputSize      Int?
+  toolCostUsd     Float?
+  errorCode       String?
+  errorMessage    String?
+
+  @@index([traceId])
+  @@index([toolName])
+}
+
+model ErrorLog {
+  id              String        @id @default(cuid())
+  traceId         String
+  trace           RequestTrace @relation(fields: [traceId], references: [id], onDelete: Cascade)
+  requestId       String?
+  userId          String?
+  timestamp       DateTime      @default(now())
+  errorType       String?
+  errorCode       String?
+  message         String?
+  stage           String?
+  provider        String?
+  model           String?
+  httpStatus      Int?
+  retryCount      Int           @default(0)
+  recoverable     Boolean       @default(false)
+  resolved        Boolean       @default(false)
+severity String @default("ERROR")
+  stack           String?
+
+  @@index([traceId])
+  @@index([errorType])
+  @@index([stage])
+  @@index([timestamp])
+  @@index([severity])
+}
+
+model BillingTransaction {
+  id               String   @id @default(cuid())
+  traceId          String
+  trace            RequestTrace @relation(fields: [traceId], references: [id], onDelete: Cascade)
+  requestId        String?
+  userId           String?
+  amount           Float
+  balanceBefore    Float
+  balanceAfter     Float
+  reason           String?
+  model            String?
+  inputTokens      Int?
+  outputTokens     Int?
+  totalApiCostUsd  Float?
+  pricingVersion   String?
+  idempotencyKey   String?  @unique
+  createdAt        DateTime @default(now())
+
+  @@index([traceId])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+model UserProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  adaptiveProfile String     @default("{}")
+  version         Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model UserPreference {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String
+  category        String
+  content         String
+  strength        Float    @default(0.5)
+  confidence      Float    @default(0.5)
+  evidenceCount   Int      @default(1)
+  source          String   @default("inferred")
+  status          String   @default("active")
+  supersedes      String?
+  supersededBy    String?
+  firstObservedAt DateTime @default(now())
+  lastObservedAt  DateTime @default(now())
+  lastConfirmedAt DateTime?
+  lastUsedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([userId, status, category])
+  @@index([userId, type])
+}
+
+model UserRequirement {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category     String
+  content      String
+  priority     String   @default("normal")
+  status       String   @default("active")
+  supersedes   String?
+  supersededBy String?
+  source       String   @default("explicit")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([userId, status])
+}
+
+model UserHabit {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String
+  description     String
+  confidence      Float    @default(0.3)
+  evidenceCount   Int      @default(1)
+  status          String   @default("candidate")
+  firstObservedAt DateTime @default(now())
+  lastObservedAt  DateTime @default(now())
+  lastUsedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([userId, status])
+  @@index([userId, type])
+}
+
+model UserInterest {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain          String
+  topic           String   @default("*")
+  strength        Float    @default(0.5)
+  evidenceCount   Int      @default(1)
+  status          String   @default("active")
+  firstObservedAt DateTime @default(now())
+  lastObservedAt  DateTime @default(now())
+  lastUsedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@unique([userId, domain, topic])
+  @@index([userId, status])
+}
+
+model DomainProfile {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain         String
+  level          String   @default("unknown")
+  confidence     Float    @default(0.3)
+  evidenceCount  Int      @default(0)
+  freshness      Float    @default(1.0)
+  lastAssessedAt DateTime?
+  lastObservedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  subdomains     DomainSubdomain[]
+  evidences      DomainEvidence[]
+  @@unique([userId, domain])
+  @@index([userId])
+}
+
+model DomainSubdomain {
+  id              String        @id @default(cuid())
+  domainProfileId String
+  domainProfile   DomainProfile @relation(fields: [domainProfileId], references: [id], onDelete: Cascade)
+  subdomain       String
+  level           String        @default("unknown")
+  confidence      Float         @default(0.3)
+  evidenceCount   Int           @default(0)
+  freshness       Float         @default(1.0)
+  lastObservedAt  DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  @@unique([domainProfileId, subdomain])
+}
+
+model DomainEvidence {
+  id              String        @id @default(cuid())
+  domainProfileId String
+  domainProfile   DomainProfile @relation(fields: [domainProfileId], references: [id], onDelete: Cascade)
+  subdomain       String?
+  evidenceType    String
+  content         String
+  impact          Float         @default(0)
+  conversationId  String?
+  messageId       String?
+  createdAt       DateTime      @default(now())
+  @@index([domainProfileId])
+}
+
+model LanguageProfile {
+  id                     String   @id @default(cuid())
+  userId                 String
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  language               String
+  overallProficiency     String   @default("unknown")
+  confidence             Float    @default(0.3)
+  evidenceCount          Int      @default(0)
+  freshness              Float    @default(1.0)
+  preferredExplanationLanguage String?
+  status                 String   @default("active")
+  lastAssessedAt         DateTime?
+  lastObservedAt         DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  skills                 LanguageSkill[]
+  vocabularies           LanguageVocabulary[]
+  preferences            LanguagePreference[]
+  @@unique([userId, language])
+  @@index([userId])
+}
+
+model LanguageSkill {
+  id                String           @id @default(cuid())
+  languageProfileId String
+  languageProfile   LanguageProfile  @relation(fields: [languageProfileId], references: [id], onDelete: Cascade)
+  dimension         String
+  level             String           @default("unknown")
+  confidence        Float            @default(0.3)
+  evidenceCount     Int              @default(0)
+  lastObservedAt    DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  @@unique([languageProfileId, dimension])
+}
+
+model LanguageVocabulary {
+  id                String          @id @default(cuid())
+  languageProfileId String
+  languageProfile   LanguageProfile @relation(fields: [languageProfileId], references: [id], onDelete: Cascade)
+  term              String
+  status            String          @default("learning")
+  evidenceCount     Int             @default(1)
+  lastSeenAt        DateTime        @default(now())
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  @@unique([languageProfileId, term])
+  @@index([languageProfileId, status])
+}
+
+model LanguagePreference {
+  id                String          @id @default(cuid())
+  languageProfileId String
+  languageProfile   LanguageProfile @relation(fields: [languageProfileId], references: [id], onDelete: Cascade)
+  type              String
+  value             String
+  source            String          @default("explicit")
+  status            String          @default("active")
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  @@index([languageProfileId, status])
+}
+
+model LongTermMemory {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String
+  subtype         String?
+  content         String
+  structuredData  String?
+  status          String   @default("active")
+  confidence      Float    @default(0.5)
+  importance      Float    @default(0.5)
+  stability       Float    @default(0.5)
+  freshness       Float    @default(1.0)
+  evidenceCount   Int      @default(1)
+  sourceType      String?
+  sourceId        String?
+  sourceVersion   Int?
+  domain          String?
+  conversationId  String?
+  fileId          String?
+  supersedes      String?
+  supersededBy    String?
+  firstObservedAt DateTime @default(now())
+  lastObservedAt  DateTime @default(now())
+  lastConfirmedAt DateTime?
+  lastUsedAt      DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+  events          MemoryEvent[]
+  @@index([userId, type, status])
+  @@index([userId, domain, status])
+  @@index([userId, conversationId])
+  @@index([userId, fileId])
+  @@index([userId, freshness])
+  @@index([userId, importance, status])
+}
+
+model MemoryEvent {
+  id        String         @id @default(cuid())
+  memoryId  String
+  memory    LongTermMemory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+  eventType String
+  detail    String?
+  metadata  String?
+  createdAt DateTime       @default(now())
+  @@index([memoryId])
+  @@index([eventType, createdAt])
+}
+
+model FileRecord {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String?
+  filename       String
+  mimeType       String?
+  size           Int?
+  hash           String?
+  version        Int      @default(1)
+  status         String   @default("active")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  versions       FileVersion[]
+  facts          FileFact[]
+  @@index([userId, status])
+  @@index([hash])
+}
+
+model FileVersion {
+  id        String     @id @default(cuid())
+  fileId    String
+  file      FileRecord @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  version   Int
+  content   String
+  summary   String?
+  hash      String?
+  createdAt DateTime   @default(now())
+  @@unique([fileId, version])
+}
+
+model FileFact {
+  id         String     @id @default(cuid())
+  fileId     String
+  file       FileRecord @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  version    Int
+  factType   String
+  content    String
+  confidence Float      @default(0.8)
+  status     String     @default("active")
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  @@index([fileId, status])
+  @@index([fileId, version])
+}
+
+model PaymentProviderAccount {
+  id              String          @id @default(cuid())
+  provider        String
+  accountId       String
+  displayName     String?
+  currency        String
+  isActive        Boolean         @default(true)
+  metadata        String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@unique([provider, accountId])
+  @@index([provider, isActive])
+}
+
+model PaymentProviderIdentity {
+  id                String          @id @default(cuid())
+  userId            String
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          String
+  displayNames      String            @default("[]")
+  normalizedNames   String            @default("[]")
+  phone             String?
+  email             String?
+  accountId         String?
+  firstObservedAt   DateTime        @default(now())
+  lastObservedAt    DateTime        @default(now())
+  verifiedCount     Int             @default(0)
+  source            String          @default("verified_payment")
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([userId, provider])
+  @@index([userId])
+  @@index([provider])
+}
+
+model Payment {
+  id                    String            @id @default(cuid())
+  provider              String
+  providerTransactionId String?
+  providerReference     String?
+  providerAccountId     String?
+
+  orderId               String?
+  order                 PaymentOrder?     @relation(fields: [orderId], references: [orderId])
+  userId                String?
+  user                  User?             @relation(fields: [userId], references: [id])
+
+  amount                Float
+  currency              String
+status String @default("PENDING")
+
+  payerDisplayName      String?
+  payerPhone            String?
+  payerEmail            String?
+  payerAccountId        String?
+
+  recipientDisplayName  String?
+  recipientAccountId    String?
+
+  occurredAt            DateTime?
+  receivedAt            DateTime          @default(now())
+
+  rawProviderData       String?
+  normalizedData        String?
+
+attributionStatus String @default("UNMATCHED")
+  verificationStatus    String            @default("pending")
+
+  idempotencyKey        String?           @unique
+  sourceType            String?
+
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  evidences             PaymentEvidence[]
+  attributions          PaymentAttribution[]
+  verifications         PaymentVerification[]
+  creditLedgerEntries   CreditLedger[]
+  refund                Refund?
+
+  @@index([provider, providerTransactionId])
+  @@index([orderId])
+  @@index([userId])
+  @@index([status])
+  @@index([attributionStatus])
+  @@index([createdAt])
+}
+
+model PaymentEvidence {
+  id          String           @id @default(cuid())
+  paymentId   String
+  payment     Payment          @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  type        String
+  value       String
+  source      String
+  strength    String
+  verified    Boolean          @default(true)
+  metadata    String?
+  createdAt   DateTime         @default(now())
+
+  @@index([paymentId])
+  @@index([type])
+}
+
+model PaymentAttribution {
+  id              String            @id @default(cuid())
+  paymentId       String
+  payment         Payment           @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  orderId         String?
+  order           PaymentOrder?     @relation(fields: [orderId], references: [orderId])
+  userId          String?
+status String @default("UNMATCHED")
+  confidence      Float             @default(0)
+  matchMethod     String?
+  evidenceSummary String?
+  reason          String?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([paymentId])
+  @@index([orderId])
+  @@index([status])
+}
+
+model PaymentVerification {
+  id                  String   @id @default(cuid())
+  paymentId           String
+  payment             Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  amountVerified      Boolean  @default(false)
+  currencyVerified    Boolean  @default(false)
+  recipientVerified   Boolean  @default(false)
+  timestampVerified   Boolean  @default(false)
+  idempotencyVerified Boolean  @default(false)
+  status              String   @default("pending")
+  reason              String?
+  checks              String?
+  createdAt           DateTime @default(now())
+
+  @@index([paymentId])
+  @@index([status])
+}
+
+model PaymentReconciliation {
+  id              String   @id @default(cuid())
+  provider        String
+  providerTxnId   String
+  internalPaymentId String?
+  orderId         String?
+  type            String
+  status          String   @default("pending")
+  detail          String?
+  resolvedAt      DateTime?
+  resolvedBy      String?
+  createdAt       DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@index([type, status])
+}
+
+model PaymentException {
+  id              String          @id @default(cuid())
+  paymentId       String?
+  orderId         String?
+  userId          String?
+  exceptionType   String
+  detail          String
+  evidence        String?
+  status          String          @default("open")
+  resolution      String?
+  resolvedBy      String?
+  resolvedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([exceptionType, status])
+  @@index([status, createdAt])
+  @@index([paymentId])
+}
+
+model CreditLedger {
+  id              String   @id @default(cuid())
+  userId          String
+  status          String   @default("pending")
+  traceId         String?
+  requestId       String?
+  actualCostUsd   Float?
+  creditsUsed     Float?
+  code            String?
+  provider        String?
+  model           String?
+  inputTokens     Int?
+  outputTokens    Int?
+  totalTokens     Int?
+  protectedCostUsd Float?
+  protectedCostMyr Float?
+  pricingVersionId   String?
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentId       String?
+  payment         Payment? @relation(fields: [paymentId], references: [id])
+  orderId         String?
+  type            String
+  amount          Float
+  balanceAfter    Float
+  description     String?
+  idempotencyKey  String?  @unique
+  metadata        String?
+  createdAt       DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([paymentId])
+  @@index([type])
+  @@index([idempotencyKey])
+}
+
+model Refund {
+  id              String   @id @default(cuid())
+  paymentId       String   @unique
+  payment         Payment  @relation(fields: [paymentId], references: [id])
+  userId          String
+  amount          Float
+  currency        String
+  reason          String?
+  creditsReversed Float    @default(0)
+  status          String   @default("pending")
+  processedAt     DateTime?
+  processedBy     String?
+  createdAt       DateTime @default(now())
+
+  @@index([paymentId])
+  @@index([userId])
+  @@index([status])
+}
+
+model ExpressionProfile {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  adaptationStrength Int      @default(2)
+  styleTone          String   @default("neutral")
+  primaryLanguage    String   @default("zh")
+  confidence         Float    @default(0.2)
+  evidenceCount      Int      @default(0)
+  status             String   @default("active")
+  lastObservedAt     DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  patterns           ExpressionPattern[]
+  emojis             EmojiSemantic[]
+  dialects           DialectOccurrence[]
+  contexts           ContextPattern[]
+  feedbacks          ExpressionFeedback[]
+  @@index([userId])
+}
+
+model ExpressionPattern {
+  id                  String            @id @default(cuid())
+  expressionProfileId String
+  expressionProfile   ExpressionProfile @relation(fields: [expressionProfileId], references: [id], onDelete: Cascade)
+  dimension           String
+  pattern             String
+  meaning             String?
+  contextHint         String?
+  confidence          Float             @default(0.3)
+  evidenceCount       Int               @default(1)
+  source              String            @default("observed")
+  status              String            @default("learning")
+  firstSeenAt         DateTime          @default(now())
+  lastSeenAt          DateTime          @default(now())
+  lastReinforcedAt    DateTime?
+  expiresAt           DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  @@unique([expressionProfileId, dimension, pattern])
+  @@index([expressionProfileId, status])
+  @@index([expressionProfileId, dimension])
+}
+
+model EmojiSemantic {
+  id                  String            @id @default(cuid())
+  expressionProfileId String
+  expressionProfile   ExpressionProfile @relation(fields: [expressionProfileId], references: [id], onDelete: Cascade)
+  emoji               String
+  meaning             String
+  sentiment           String            @default("neutral")
+  intensity           Float             @default(0.5)
+  usageCount          Int               @default(1)
+  confidence          Float             @default(0.3)
+  status              String            @default("learning")
+  lastSeenAt          DateTime          @default(now())
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  @@unique([expressionProfileId, emoji])
+  @@index([expressionProfileId, status])
+}
+
+model DialectOccurrence {
+  id                  String            @id @default(cuid())
+  expressionProfileId String
+  expressionProfile   ExpressionProfile @relation(fields: [expressionProfileId], references: [id], onDelete: Cascade)
+  term                String
+  dialect             String            @default("unknown")
+  scope               String            @default("personal")
+  region              String?
+  confidence          Float             @default(0.3)
+  occurrenceCount     Int               @default(1)
+  status              String            @default("learning")
+  lastSeenAt          DateTime          @default(now())
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  @@unique([expressionProfileId, term])
+  @@index([expressionProfileId, status])
+  @@index([dialect])
+}
+
+model ContextPattern {
+  id                  String            @id @default(cuid())
+  expressionProfileId String
+  expressionProfile   ExpressionProfile @relation(fields: [expressionProfileId], references: [id], onDelete: Cascade)
+  patternId           String?
+  expression          String
+  scene               String
+  intent              String?
+  tone                String            @default("neutral")
+  confidence          Float             @default(0.3)
+  occurrenceCount     Int               @default(1)
+  status              String            @default("learning")
+  lastSeenAt          DateTime          @default(now())
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  @@index([expressionProfileId, scene])
+  @@index([expressionProfileId, status])
+}
+
+model ExpressionFeedback {
+  id                  String            @id @default(cuid())
+  expressionProfileId String
+  expressionProfile   ExpressionProfile @relation(fields: [expressionProfileId], references: [id], onDelete: Cascade)
+  patternId           String?
+  action              String
+  targetPattern       String?
+  correction          String?
+  note                String?
+  applied             Boolean           @default(false)
+  createdAt           DateTime          @default(now())
+  @@index([expressionProfileId, createdAt])
+}
+
+// 地区级共享表达习惯：某 region 中 ≥70% 用户共有的表达习惯（聚合得出），注入该地区用户
+model RegionExpressionHabit {
+  id          String   @id @default(cuid())
+  region      String   // 国家级，如 "CN"
+  dimension   String   // vocabulary / sentence_pattern / abbreviation ...
+  pattern     String   // 习惯词
+  userCount   Int      @default(0)   // 该 region 拥有该 active pattern 的用户数（分子）
+  regionTotal Int      @default(0)   // 该 region 有 active ExpressionProfile 的用户数（分母）
+  ratio       Float    @default(0)   // userCount / regionTotal
+  confidence  Float    @default(0.5)
+  status      String   @default("active") // active / decayed
+  computedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@unique([region, dimension, pattern])
+  @@index([region, status])
+}
+
+model Connection {
+  id                  String   @id @default(cuid())
+  userId              String
+  providerId          String
+  type                String   // "oauth" | "api" | "mcp" | "plugin" | "browser" | "generic_web"
+  authMethod          String
+  status              String   // "pending" | "active" | "expired" | "revoked" | "reauth_required"
+  permissions         String
+  scopes              String
+  credentialRef       String?
+  account             String?
+  owner               String?
+  repo                String?
+  accountName         String?  // Human-readable account name for multi-account
+  platformManifestId  String?  // FK to PlatformManifest.id
+  sessionId           String?  // Browser session ID for browser connectors
+  lastHealthCheck     DateTime?
+  lastTokenRefresh    DateTime?
+  meta                String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([userId, providerId])
+  @@index([status])
+  @@index([platformManifestId])
+}
+
+model Credential {
+  id         String    @id @default(cuid())
+  userId     String
+  providerId String
+  type       String   // "github_pat" | "github_oauth" | "api_key" | "browser_session"
+  status     String   // "active" | "expired" | "revoked"
+  secretCipher String // AES-256-GCM ciphertext: {"c":"...","iv":"...","tag":"..."} (base64)
+  meta       String?
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([userId, providerId, type])
+  @@index([userId])
+}
+
+model ActionRequest {
+  id              String   @id @default(cuid())
+  traceId         String?
+  userId          String
+  connectionId    String?
+  toolId          String
+  action          String
+  riskLevel       String   // "R0" | "R1" | "R2" | "R3" | "R4"
+  status          String   // "pending" | "approved" | "rejected" | "expired" | "executed" | "failed" | "cancelled" | "waiting_auth" | "verifying"
+  preview         String?
+  requestedBy     String?
+  decidedBy       String?
+  result          String?
+  verificationResult String?  // post-action verification result
+  timeoutAt       DateTime?
+  checkpoint      String?  // task checkpoint for resume
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([traceId])
+  @@index([connectionId])
+}
+
+model DeviceSession {
+  id           String   @id @default(cuid())
+  userId       String
+  deviceType   String   // "desktop_web" | "mobile_app" | "mobile_web"
+  label        String?
+  status       String   // "active" | "revoked"
+  capabilities String
+  lastActiveAt DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+model BrowserSession {
+  id             String   @id @default(cuid())
+  userId         String
+  providerId     String?  // connected provider (if any)
+  status         String   // "active" | "paused" | "awaiting_user" | "completed" | "failed" | "revoked"
+  url            String?
+  phase          String   // "observe" | "understand" | "plan" | "permission" | "act" | "verify"
+  pendingAction  String?
+  result         String?
+  sessionId      String?  // Playwright browser context ID
+  profile        String?  // "temporary" | "persistent"
+  cookiesCount   Int?     @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([providerId])
+}
+
+model TaskHandoff {
+  id             String   @id @default(cuid())
+  userId         String
+  conversationId String
+  fromDevice     String?
+  toDevice       String?
+  reason         String?
+  status         String   // "pending" | "resumed" | "cancelled"
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([conversationId])
+}
+
+model FxVersion {
+  id            String   @id @default(cuid())
+  baseCurrency  String   @default("USD")
+  quoteCurrency String
+  rate          Float
+  source        String
+  fetchedAt     DateTime @default(now())
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  pricingVersions PricingVersion[]
+  @@index([baseCurrency, quoteCurrency, isActive])
+  @@index([fetchedAt])
+}
+
+model ProviderPricingVersion {
+  id                 String   @id @default(cuid())
+  provider           String
+  inputCostPerMUsd   Float
+  outputCostPerMUsd  Float
+  cachedCostPerMUsd  Float?
+  protectionFactor   Float  @default(1.15)
+  costFxRate         Float  @default(4.50)
+  effectiveAt        DateTime @default(now())
+  expiresAt          DateTime?
+  createdAt          DateTime @default(now())
+  pricingVersions    PricingVersion[]
+  @@index([provider, effectiveAt])
+}
+
+model CreditPricingVersion {
+  id                   String   @id @default(cuid())
+  effectiveAt          DateTime @default(now())
+  packagesJson         String
+  subscriptionJson     String?
+  modelCreditsPerMJson String
+  minSafePricesJson    String
+  maxSafePricesJson    String
+  status               String   @default("active")
+  createdAt            DateTime @default(now())
+  pricingVersions      PricingVersion[]
+  @@index([status, effectiveAt])
+}
+
+model PricingVersion {
+  id                       String   @id @default(cuid())
+  code                     String   @unique
+  fxVersionId              String?
+  fxVersion                FxVersion? @relation(fields: [fxVersionId], references: [id])
+  providerPricingVersionId String?
+  providerPricingVersion   ProviderPricingVersion? @relation(fields: [providerPricingVersionId], references: [id])
+  creditPricingVersionId   String?
+  creditPricingVersion     CreditPricingVersion? @relation(fields: [creditPricingVersionId], references: [id])
+  publisher                String   @default("auto")
+  status                   String   @default("active")
+  publishedAt              DateTime @default(now())
+  createdAt                DateTime @default(now())
+  @@index([status, publishedAt])
+}
+
+model PlatformManifest {
+  id              String   @id @default(cuid())
+  providerId      String   @unique
+  displayName     String
+  category        String   // social, e-commerce, developer, cloud_storage, ...
+  subcategories   String
+  regions         String // ISO 3166-1 alpha-2 codes or "global"
+  description     String?
+  website         String?
+  apiSupported    Boolean  @default(false)
+  oauthSupported  Boolean  @default(false)
+  apiKeySupported Boolean  @default(false)
+  mcpSupported    Boolean  @default(false)
+  browserSupported Boolean @default(true)
+  pluginSupported Boolean  @default(false)
+  genericWebSupported Boolean @default(true)
+  multiAccount    Boolean  @default(false)
+  mobileSupported Boolean  @default(true)
+  desktopSupported Boolean @default(true)
+  webSupported    Boolean  @default(true)
+  defaultRiskLevel String  @default("R1")
+  rateLimit       String?  // "100/min" etc.
+  documentationUrl String?
+  healthCheckUrl  String?
+  version         String   @default("1")
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  healthLogs      ProviderHealth[]
+
+  @@index([category])
+  @@index([regions])
+  @@index([isActive])
+}
+
+model ProviderHealth {
+  id             String   @id @default(cuid())
+  platformManifestId String
+  platformManifest PlatformManifest? @relation(fields: [platformManifestId], references: [id], onDelete: Cascade)
+  connectorType  String   // "api" | "oauth" | "browser" | "mcp" | "plugin" | "generic_web"
+  status         String   // "healthy" | "degraded" | "unhealthy" | "unknown"
+  availability   Float?   // 0.0-1.0
+  latencyMs      Int?
+  errorRate      Float?   // 0.0-1.0
+  rateLimitRemaining Int?
+  quotaUsed      Int?
+  quotaTotal     Int?
+  retryAfter     Int?     // seconds
+  lastCheckAt    DateTime @default(now())
+  errorMessage   String?
+  checkedAt      DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([platformManifestId, checkedAt])
+  @@index([status])
+}
+
+model ConnectorRuntime {
+  id             String   @id @default(cuid())
+  connectionId   String
+  connectorType  String   // "api" | "oauth" | "browser" | "mcp" | "plugin" | "generic_web"
+  status         String   // "idle" | "running" | "paused" | "error"
+  activeTabCount Int?     @default(0)
+  sessionState   String?
+  lastActivity   DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([connectionId])
+  @@index([status])
+}
+
+model PluginInstance {
+  id              String   @id @default(cuid())
+  userId          String
+  manifestId      String?
+  pluginRegistryId String?
+  name            String
+  version         String
+  status          String   // "installed" | "authorized" | "connected" | "disabled" | "uninstalled"
+  config          String?
+  sandboxPolicy   String?
+  healthStatus    String?  // "healthy" | "degraded" | "unhealthy"
+  lastHealthCheck DateTime?
+  installedAt     DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+model MCPInstance {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  serverUrl       String
+  status          String   // "discovered" | "connected" | "error" | "disabled"
+  tools           String?    // list of available tool names
+  healthStatus    String?
+  lastHealthCheck DateTime?
+  metadata        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+model FileBridge {
+  id              String   @id @default(cuid())
+  userId          String
+  sourceType      String   // "local" | "cloud" | "github" | "browser_download" | "browser_upload" | "attachment" | "generated" | "remote"
+  sourceId        String?
+  destinationType String?
+  destinationId   String?
+  mimeType        String?
+  fileSize        Int?
+  sha256          String?
+  status          String   // "uploaded" | "downloading" | "transferring" | "completed" | "failed"
+  metadata        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, sourceType])
+  @@index([userId, status])
+}
+
+model TaskRun {
+  id              String   @id @default(cuid())
+  userId          String
+  conversationId  String?
+  title           String?
+  providerId      String?
+  connectionId    String?
+  taskType        String   // "connect" | "browse" | "automate" | "file_transfer" | "data_sync"
+  status          String   // "created" | "queued" | "running" | "waiting_approval" | "waiting_auth" | "paused" | "resuming" | "completed" | "failed" | "cancelled" | "timeout"
+  progress        Int?     @default(0)
+  checkpoint      String?
+  result          String?
+  error           String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  timeoutAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, createdAt])
+  @@index([conversationId])
+}
+
+// ================================================================
+// Provider connections — admin-managed Base URLs + API key pools.
+// provider = routing family key: 'agnes' | 'google' | 'openai' | 'deepseek'
+//   | 'xiaomi' | 'custom-<slug>'. apiKeys = JSON string array (<= 30).
+// ================================================================
+model ProviderConnection {
+  provider       String   @default("")
+  tier           String   @default("FREE") // "FREE" | "PRO" — 免费/Pro 供应商完全分离
+  label          String   @default("")
+  baseUrl        String // 完整 URL（不再拼接），如 https://apihub.agnes-ai.com/v1/chat/completions
+  baseUrlRoot    String?
+  apiKeys        String   @default("[]") // JSON 数组，无数量上限
+  apiLimit       String   @default("") // JSON RateLimitBlock — 单 API 独立额度（每把 key）
+  carrierLimit   String   @default("") // JSON RateLimitBlock — 该供应商所有 API 统一额度
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  @@id([provider, tier])
+}
+
+model ModelConfig {
+  modelKey          String   @id
+  provider          String   @default("custom")
+  apiModel          String   @default("")
+  displayName       String   @default("") // 空=前端自动去前缀/后缀推导
+  tier              String   @default("FREE")
+  maxTokens         Int      @default(8192)
+  contextWindow     Int      @default(32768)
+  costPer1k         Float    @default(0) // 积分/1000 token；0=免费；Pro 手动输入
+  category          String   @default("general")
+  vendor            String   @default("") // 厂商显示分类（ChatGPT/Claude/Gemini…）；空=按 provider 自动
+  rateLimit         String   @default("") // JSON RateLimitBlock — 调用模型独立额度
+  status            String   @default("online")
+  enabled           Boolean  @default(true)
+  capabilities      String @default("")
+  supportsReasoning Boolean  @default(false)
+  supportsTools     Boolean  @default(false)
+  supportsVision    Boolean  @default(false)
+  supportsStreaming Boolean  @default(true)
+  supportsStructuredOutput Boolean @default(false)
+  qualityProfile    Int      @default(5)
+  speedProfile      Int      @default(5)
+  reliabilityProfile Int     @default(5)
+  overrideKeys      String @default("") // which fields are overridden vs defaults
+  lastSyncedAt      DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model SubscriptionPricing {
+  id         String  @id @default(cuid())
+  tier       String  @unique // "PRO" | "ULTRA"
+  monthlyUsd Float   @default(0)
+  yearlyUsd  Float   @default(0)
+  creditGrant Int    @default(0)
+  isActive   Boolean @default(true)
+  updatedAt  DateTime @updatedAt
+}
+
+model ModelCapability {
+  modelKey         String  @id
+  supportsTemperature     Boolean  @default(true)
+  minTemperature    Float   @default(0)
+  maxTemperature    Float   @default(2)
+  supportsTopP        Boolean  @default(true)
+  minTopP           Float   @default(0)
+  maxTopP           Float   @default(1)
+  supportsReasoning   Boolean  @default(false)
+  supportsFrequencyPenalty Boolean @default(false)
+  supportsPresencePenalty   Boolean @default(false)
+  supportsStructuredOutput  Boolean @default(false)
+  supportsTools     Boolean  @default(false)
+  supportsVision    Boolean  @default(false)
+  supportsStreaming Boolean  @default(true)
+  supportsJSONMode  Boolean  @default(false)
+  supportsN         Boolean  @default(false)
+  supportsLogprobs  Boolean  @default(false)
+  maxOutputTokens   Int     @default(8192)
+  maxContextTokens  Int     @default(32768)
+  metadata          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  @@index([modelKey])
+}
+
+model OrganizationJob {
+  id             String    @id @default(cuid())
+  scopeType      String    // object, variant, version, category, subtree
+  scopeId        String
+  objectId       String?   // optional convenience link (single-object scope)
+  triggerReason  String    // NEW_CONTENT, ACCUMULATION, MANY_CHANGES, STRUCTURE_CHAOS, DUPLICATES, WRONG_CATEGORY, MIXED_VARIANT, MIXED_VERSION, MIXED_FACT, EVIDENCE_CHAOS, PERIODIC, MANUAL
+  status         String    @default("QUEUED") // QUEUED, RUNNING, SCANNING, PROPOSING, MERGING, VALIDATING, APPLYING, COMPLETED, FAILED, RETRYING, CANCELLED
+  priority       Int       @default(5)
+  attemptCount   Int       @default(0)
+  workerId       String?
+  progress       Int       @default(0)
+  lastError      String?
+  planJson       String?
+  resultJson     String?
+  snapshotRef    String?
+  snapshotHash   String?
+  heartbeatAt    DateTime?
+  leaseUntil     DateTime?
+  queuedAt       DateTime  @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  @@index([scopeType, scopeId, status])
+  @@index([status, priority])
+  @@index([workerId, heartbeatAt])
+  @@index([leaseUntil])
+}
+
+model ModelQuota {
+  modelKey       String  @id
+  rpmLimit       Int?
+  tpmLimit       Int?
+  dailyLimit     Int?
+  maxConcurrency Int     @default(5)
+  requestTimeout Int     @default(60)
+  tokenBudget    Int?
+  source         String  @default("default")
+  updatedAt      DateTime @updatedAt
+}
+
+
+model DocumentChunk {
+  id         String   @id @default(cuid())
+  sourceId   String
+  sourceType String
+  userId     String?
+  content    String
+  title      String?
+  language   String?
+  metadata   String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  @@index([sourceType, sourceId])
+  @@index([userId])
+  @@index([isActive])
+}
+model KnowledgeFolder {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  isRules     Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  entries     KnowledgeBase[]
+}
+model KnowledgeBase {
+  id            String           @id @default(cuid())
+  title         String
+  content       String
+  category      String
+  evidenceLevel String           @default("C")
+  region        String?
+  product       String?
+  version       String?
+  source        String?
+  folderId      String?
+  folder        KnowledgeFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  isActive      Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+}
+model Skill {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  prompt      String
+  category    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+model LegalRule {
+  id       String @id @default(cuid())
+  region   String
+  content  String
+  category String
+}
+model EvolutionSignal {
+  id              String   @id @default(cuid())
+  userId          String?
+  conversationId  String?
+  messageId       String?
+  region          String?
+  signalType      String
+  severity        String   @default("low")
+  detail          String?
+  attributed      Boolean  @default(false)
+  worthEvolving   Boolean  @default(false)
+  attribution     String?
+  createdAt       DateTime @default(now())
+  @@index([signalType, createdAt])
+  @@index([userId])
+  @@index([region])
+}
+model EvolutionCandidate {
+  id            String   @id @default(cuid())
+  scope         String
+  changeType    String
+  targetType    String
+  targetId      String?
+  hypothesis    String
+  content       String
+  evidenceRefs  String?
+  region        String?
+  userId        String?
+  blastRadius   String   @default("low")
+  gateLevel     Int      @default(1)
+  status        String   @default("pending")
+  confidence    Float    @default(0.5)
+  evaluationId  String?
+  promotedAt    DateTime?
+  rejectedAt    DateTime?
+  rejectReason  String?
+  canaryPercent Int      @default(0)
+  createdBy     String   @default("evolution-engine")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([scope, status])
+  @@index([gateLevel, status])
+  @@index([region])
+  @@index([status, createdAt])
+}
+model EvaluationReport {
+  id               String   @id @default(cuid())
+  candidateId      String
+  securityPassed   Boolean  @default(false)
+  qualityScore     Float    @default(0)
+  regressionPassed Int      @default(0)
+  regressionFailed Int      @default(0)
+  agnesAssessment  String?
+  decision         String   @default("pending")
+  metrics          String?
+  createdAt        DateTime @default(now())
+  @@index([candidateId])
+}
+model RegionInsight {
+  id          String   @id @default(cuid())
+  region      String
+  insight     String
+  confidence  Float    @default(0.7)
+  candidateId String?
+  isActive    Boolean  @default(true)
+  hitCount    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([region, isActive])
+}
+model EvolutionAudit {
+  id          String   @id @default(cuid())
+  action      String
+  candidateId String?
+  adminId     String?
+  scope       String?
+  reason      String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+  @@index([action, createdAt])
+}
+model EvolutionBudget {
+  id              String   @id @default(cuid())
+  date            DateTime @unique
+  systemPoolTotal Int      @default(10000)
+  systemPoolUsed  Int      @default(0)
+  signalCount     Int      @default(0)
+  candidateCount  Int      @default(0)
+  promoteCount    Int      @default(0)
+  rejectCount     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+model ResearchJob {
+  rootTaskId        String?
+  iteration       Int?
+  triggerType     String?
+  queries         String?
+  targetFactId         String?
+  id             String   @id @default(cuid())
+  objectId       String
+  variantId      String?
+  jobType        String   @default("FULL_RESEARCH") // FULL_RESEARCH, ENRICHMENT, PRICE_RESEARCH, MEDIA_RESEARCH
+  status         String   @default("QUEUED") // QUEUED, RUNNING, COLLECTING, VALIDATING, ORGANIZING, WRITING, COMPLETED, FAILED, RETRYING, CANCELLED, STALE
+  priority       Int      @default(5)
+  attemptCount   Int      @default(0)
+  workerId       String?
+  progress        Int      @default(0)
+  lastError      String?
+  planJson       String?
+  resultJson     String?
+  queuePosition  Int?
+  queuedAt       DateTime @default(now())
+  startedAt      DateTime?
+  heartbeatAt    DateTime?
+  leaseUntil     DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  @@index([status, queuedAt])
+  @@index([objectId, status])
+  @@index([workerId, heartbeatAt])
+  @@index([leaseUntil])
+}
+model KnowledgeBlindSpot {
+  id            String   @id @default(cuid())
+  objectId      String
+  variantId     String?
+  gapType       String   // MISSING, OUTDATED, INSUFFICIENT_EVIDENCE, CONFLICT, REGION_MISMATCH, VERSION_MISMATCH, REALTIME_REQUIRED
+  gapDescription String
+  priority      Int      @default(5)
+  status        String   @default("OPEN") // OPEN, RESEARCHING, RESOLVED, CANNOT_RESOLVE
+  researchJobId String?
+  resolvedAt    DateTime?
+  resolvedSummary String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([objectId, status])
+  @@index([gapType, status])
+  @@index([researchJobId])
+}
+model ResearchQueueState {
+  id          String   @id @default(cuid())
+  queueName   String   @unique // "research", "enrichment", "price", "media"
+  maxConcurren Int     @default(5)
+  activeCount Int      @default(0)
+  lastDequeue DateTime?
+  configJson  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+model EvolutionJob {
+  id             String    @id @default(cuid())
+  userId         String
+  conversationId String
+  region         String?
+  status         String    @default("QUEUED") // QUEUED, RUNNING, COMPLETED, FAILED
+  priority       Int       @default(5)
+  attemptCount   Int       @default(0)
+  workerId       String?
+  lastError      String?
+  resultJson     String?
+  heartbeatAt    DateTime?
+  leaseUntil     DateTime?
+  queuedAt       DateTime  @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  @@index([status, queuedAt])
+  @@index([userId, conversationId, status])
+  @@index([workerId, heartbeatAt])
+  @@index([leaseUntil])
+}
+
+model ModelLimit {
+  id             String   @id @default(cuid())
+  modelId        String   @unique
+  version        String?
+  inputTokenLimit  Int?
+  outputTokenLimit Int?
+  contextWindow    Int?
+  source           String?
+  sourceUrl        String?
+  verifiedAt       DateTime?
+  status           String    @default("unknown")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([modelId])
+}
+
+model ModelLimitHistory {
+  id               String   @id @default(cuid())
+  modelId          String
+  version          String?
+  outputTokenLimit Int?
+  source           String?
+  verifiedAt       DateTime
+  recordedAt       DateTime @default(now())
+
+  @@index([modelId, recordedAt])
+}
+
+// ================================================================
+// Additional user-domain models referenced by runtime code but not
+// present in the original 95-model split. Recovered from usage.
+// ================================================================
+
+model DiscoveredModel {
+  apiModel        String   @id
+  displayName     String
+  provider        String
+  inputPrice      Float
+  cacheHitPrice   Float
+  cacheMissPrice  Float
+  outputPrice     Float
+  totalCost       Float
+  creditsPer1M    Float
+  originalCost    Float
+  currentCost     Float
+  priceChanged    Boolean  @default(false)
+  priceChangedAt  DateTime?
+  discoveredAt    DateTime @default(now())
+  priceVerifiedAt DateTime?
+  status          String   @default("active")
+  sourceUrl       String?
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([provider])
+}
+
+model ModelPriceHistory {
+  id             String   @id @default(cuid())
+  apiModel       String
+  inputPrice     Float
+  cacheHitPrice  Float
+  cacheMissPrice Float
+  outputPrice    Float
+  totalCost      Float
+  creditsPer1M   Float
+  changedAt      DateTime @default(now())
+
+  @@index([apiModel, changedAt])
+}
+
+model RefreshTask {
+  id                 String    @id @default(cuid())
+  userId             String?
+  factId             String
+  refreshCycle       String
+  objectId           String?
+  objectType         String?
+  reason             String?
+  priority           Int       @default(5)
+  status             String    @default("QUEUED")
+  workerId           String?
+  heartbeatAt        DateTime?
+  leaseUntil         DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  lastError          String?
+  progress           Int       @default(0)
+  attemptCount       Int       @default(0)
+  prevIntervalMonths Int?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([factId, refreshCycle])
+  @@index([status, priority])
+  @@index([userId, objectType])
+}
+
+model SelfRepairTask {
+  id               String    @id @default(cuid())
+  userId           String?
+  targetFactId     String?
+  rootJobId        String?
+  rootTaskId       String?
+  researchJobId    String?
+  triggerType      String?
+  reason           String?
+  iteration        Int       @default(0)
+  lastStatus       String?
+  lifecycleStatus  String?
+  verificationStatus String?
+  refreshCycle     String?
+  resultJson       String?
+  status           String    @default("QUEUED")
+  terminateReason  String?
+  attempts         Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId, status])
+}
+
+model SkillAnalysisJob {
+  id          String   @id @default(cuid())
+  skillId     String
+  status      String   @default("QUEUED")
+  workerId    String?
+  queuedAt    DateTime @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  lastError   String?
+  resultJson  String?
+  trigger     String?
+  attemptCount Int     @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([skillId])
+}
+
+model VerificationJob {
+  id                 String   @id @default(cuid())
+  userId             String
+  conversationId     String
+  correctionEventId  String
+  status             String   @default("QUEUED")
+  queriesJson        String?
+  resultJson         String?
+  lastError          String?
+  workerId           String?
+  heartbeatAt        DateTime?
+  leaseUntil         DateTime?
+  createdAt          DateTime @default(now())
+  completedAt        DateTime?
+
+  @@index([userId, conversationId])
+  @@index([status])
+}
+
+model ContextCompressionJob {
+  id                 String   @id @default(cuid())
+  userId             String
+  conversationId     String
+  inputMemoryIds     String
+  trigger            String
+  dedupeKey          String
+  status             String   @default("QUEUED")
+  resultMemoryId     String?
+  lastError          String?
+  compressionVersion Int      @default(1)
+  workerId           String?
+  leaseUntil         DateTime?
+  completedAt        DateTime?
+  queuedAt           DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([userId, conversationId, dedupeKey])
+  @@index([status])
+}
+
+model ContextMemory {
+  id                   String   @id @default(cuid())
+  userId               String
+  supersededBy         String?
+  supersededAt         DateTime?
+  conversationId       String
+  type                 String
+  content              String
+  priority             Float    @default(0.5)
+  importance           Float    @default(0.5)
+  dedupeKey            String?
+  eventKind            String?
+  provenanceMessageId  String?
+  scenarioId           String?
+  entities             String?
+  references           String?
+  status               String   @default("active")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([userId, conversationId, dedupeKey])
+  @@index([userId, conversationId, type])
+  @@index([userId, eventKind])
+}
+
+model CorrectionEvent {
+  id                  String   @id @default(cuid())
+  userId              String
+  conversationId      String
+  dedupeKey           String
+  messageFromId       String
+  assistantClaimId    String
+  kind                String
+  targetsPreviousAiOutput Boolean @default(false)
+  verificationRequired Boolean @default(false)
+  claimSummary        String?
+  userClaim           String?
+  verificationStatus  String   @default("UNVERIFIED")
+  verifiedAgainst     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([userId, conversationId, dedupeKey])
+  @@index([userId, verificationRequired])
+}
+
+model ActiveTaskState {
+  id             String   @id @default(cuid())
+  userId         String
+  conversationId String
+  task           String?
+  stage          String?
+  status         String   @default("in_progress")
+  currentGoal    String?
+  constraints    String?
+  payloadJson    String?
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, conversationId])
+}
+
+model ModelProfileJob {
+  id          String   @id @default(cuid())
+  modelId     String?
+  provider    String?
+  jobKind     String   @default("model_profile")
+  scenarioId  String?
+  poolVersion String?
+  resultJson  String?
+  attemptCount Int     @default(0)
+  trigger     String?
+  queuePosition Int?
+  status      String   @default("QUEUED")
+  workerId    String?
+  heartbeatAt DateTime?
+  leaseUntil  DateTime?
+  queuedAt    DateTime @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  lastError   String?
+
+  @@index([status])
+  @@index([provider])
+}
+
+// ================================================================
+// Artifact + usage models recovered from commit history
+// (audio / office / pricing features added after the original split)
+// ================================================================
+
+model AudioArtifact {
+  id                 String   @id @default(cuid())
+  userId             String
+  conversationId     String?
+  messageId          String?
+  type               String   @default("audio")
+  provider           String
+  model              String
+  format             String
+  mimeType           String
+  originalStorageRef String
+  playbackStorageRef String?
+  filename           String
+  size               Int      @default(0)
+  duration           Float?
+  generationId       String?
+  selectedModel      String?
+  actualModel        String?
+  voiceId            String?
+  voiceDesignPrompt  String?
+  encoding           String?
+  sampleRate         Int?
+  channels           Int?
+  bitDepth           Int?
+  status             String   @default("pending")
+  failureReason      String?
+  providerRequestId  String?
+  version            Int      @default(1)
+  dedupeKey          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, status])
+  @@index([conversationId, messageId])
+  @@index([userId, model, status])
+}
+
+model VoiceReference {
+  id             String   @id @default(cuid())
+  userId         String
+  conversationId String?
+  messageId      String?
+  artifactId     String?
+  mimeType       String?
+  dedupeKey      String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
+model OfficeArtifact {
+  id                 String   @id @default(cuid())
+  userId             String
+  conversationId     String?
+  messageId          String?
+  type               String   @default("office")
+  format             String
+  mimeType           String
+  originalStorageRef String
+  previewStorageRef  String?
+  previewStatus      String   @default("pending")
+  filename           String
+  size               Int      @default(0)
+  generationId       String?
+  selectedModel      String?
+  actualModel        String?
+  specJson           String?
+  version            Int      @default(1)
+  parentVersion      Int?
+  supersededBy       String?
+  status             String   @default("pending")
+  failureReason      String?
+  checksum           String?
+  pageCount          Int?
+  providerRequestId  String?
+  dedupeKey          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, status])
+  @@index([userId, type, format])
+  @@index([conversationId, messageId])
+}
+
+model TokenUsage {
+  id                  String   @id @default(cuid())
+  userId              String
+  conversationId      String?
+  sessionId           String?
+  messageId           String?
+  model               String
+  provider            String
+  mode                String   @default("standard")
+  multiplier          Float    @default(1)
+  overflowTransferred Boolean  @default(false)
+  overflowAmount      Int      @default(0)
+  actualInputTokens   Int      @default(0)
+  actualOutputTokens  Int      @default(0)
+  actualTotalTokens   Int      @default(0)
+  displayInputTokens  Int      @default(0)
+  displayOutputTokens Int      @default(0)
+  displayTotalTokens  Int      @default(0)
+  modelVersion        String?
+  verifiedOutputLimit Int?
+  limitSource         String?
+  limitVerifiedAt     DateTime?
+  inputTokens         Int      @default(0)
+  outputTokens        Int      @default(0)
+  totalTokens         Int      @default(0)
+  cacheHitTokens      Int      @default(0)
+  cacheMissTokens     Int      @default(0)
+  costUsd             Float    @default(0)
+  creditsSpent        Float    @default(0)
+  durationMs          Int?
+  status              String   @default("ok")
+  createdAt           DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([model, createdAt])
+  @@index([conversationId])
+}
+
+// Account-scoped skill installed from an external link (GitHub project /
+// zip / markdown). Owned by one user (userId), isolated per account. Admin
+// can list every account's installs (roster) and promote a selected one into
+// the global formal-Skill pool (promotedSkillId) — AI never publishes.
+model UserInstalledSkill {
+  id              String   @id @default(cuid())
+  userId          String
+  sourceType      String   // "github" | "url_zip" | "url_md" | "manual"
+  sourceUrl       String
+  repoOwner       String?
+  repoName        String?
+  repoRef         String?
+  name            String
+  description     String?
+  category        String?
+  version         String   @default("1.0.0")
+  prompt          String
+  capabilities    String   @default("[]")
+  status          String   @default("pending") // "pending" | "active" | "rejected" | "promoted"
+  scanStatus      String   @default("pending") // "pending" | "clean" | "flagged"
+  scanReport      String?
+  promotedSkillId String?
+  installedAt     DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, sourceUrl])
+  @@index([userId])
+  @@index([status])
+  @@index([promotedSkillId])
+}

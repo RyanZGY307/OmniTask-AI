@@ -1,0 +1,291 @@
+// Load .env into process.env before any config read. This module MUST
+// import before ./config (which reads process.env at import time).
+import './loadEnv';
+
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import { env } from './config';
+
+import authRoutes from './routes/auth';
+import chatRoutes from './routes/chat';
+import adminRoutes from './routes/admin';
+import knowledgeRoutes from './routes/knowledge';
+import paymentRoutes from './routes/payment';
+import tokenRoutes from './routes/tokens';
+import memoryRoutes from './routes/memory';
+import feedbackRoutes from './routes/feedback';
+import settingsRoutes from './routes/settings';
+import currencyRoutes from './routes/currency';
+import evolutionAdminRoutes from './routes/evolutionAdmin';
+import adminObservabilityRoutes from './routes/adminObservability';
+import userSkillsRoutes from './routes/userSkills';
+import userProfileRoutes from './routes/userProfile';  // NEW
+import connectionsRoutes from './routes/connections';
+import providersRoutes from './routes/providers';
+import actionsRoutes from './routes/actions';
+import { devicesRouter, tasksRouter, browserRouter } from './routes/devices';
+import modelsRoutes from './routes/models';
+import { errorHandler } from './middleware/errorHandler';
+import { startRateUpdater } from './services/exchangeRate';
+import { initApiKeyPools } from './services/apiKeyPool';
+import { startOrderCleanupJob } from './services/orderCleanup';
+import { runCleanupCycle } from './services/logger';
+import {
+  wakeDatabase,
+  ensureKnowledgeSchema,
+  ensureUserSchema,
+  ensureConversationSchema,
+  ensureOverflowSchema,
+  startKeepAlive,
+} from './services/db';
+import { initDynamicConfig } from './services/configSync';
+import { seedDefaultScenarios } from './services/scenarioRegistry';
+import { initializeModelLimits } from './services/billing/modelLimits';
+import { loadProviderConfigs } from './services/providerConfig';
+import { bootstrapInitialPricingVersion, runDailyPricingJob } from './services/finance/pricingEngine';
+import { seedProviderPricingFromEnv } from './services/finance/providerCosts';
+import { prismaUser, prismaConversation, prismaKnowledge, prismaOverflow } from './services/db';
+import pricingRoutes from './routes/pricing';
+import { registerAllConnectors } from './connections/connectors';
+import { initVault } from './connections/vault';
+import importRoutes from './routes/import';
+import expressionRoutes from './routes/expression';
+import promptRoutes from './routes/prompt';
+import { initWorkerPool } from './services/workerPool';
+import { cleanupSessions } from './services/sessionState';
+import mediaRoutes from './routes/media';
+import audioRoutes from './routes/audio';
+import officeRoutes from './routes/office';
+
+const app = express();
+
+app.use(helmet());
+// CLIENT_URL 支持逗号分隔多 origin（域名迁移过渡期新旧前端域共存）
+const clientOrigins = (env.CLIENT_URL || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+app.use(cors({
+  origin: env.CLIENT_URL === '*'
+    ? true
+    : clientOrigins.length === 1
+      ? clientOrigins[0]
+      : clientOrigins,
+  credentials: true,
+}));
+app.use(express.json({ limit: '50mb' }));
+
+app.get('/health', (_, res) => res.json({ status: 'ok', version: '4.0.0-memory-runtime' }));
+
+// ==================== API + DB Health (frontend connection gate) ====================
+// /api/health verifies both that the API is alive AND that all 4 PostgreSQL
+// datasources answer a ping within 5s. The frontend root layout polls this
+// and withholds the whole UI until it returns ok.
+async function pingDb(client: any, timeoutMs = 5000): Promise<boolean> {
+  try {
+    await Promise.race([
+      client.$queryRaw`SELECT 1`,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('db-ping-timeout')), timeoutMs)),
+    ]);
+    return true;
+  } catch { return false; }
+}
+
+app.get('/api/health', async (_req, res) => {
+  const [userOk, convOk, knowOk, overOk] = await Promise.all([
+    pingDb(prismaUser), pingDb(prismaConversation), pingDb(prismaKnowledge), pingDb(prismaOverflow),
+  ]);
+  const ok = userOk && convOk && knowOk && overOk;
+  res.status(ok ? 200 : 503).json({ ok, dbs: { user: userOk, conversation: convOk, knowledge: knowOk, overflow: overOk } });
+});
+
+app.use('/api/auth', authRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/admin/import', importRoutes);
+app.use('/api/admin/observability', adminObservabilityRoutes);
+app.use('/api/knowledge', knowledgeRoutes);
+app.use('/api/skills', userSkillsRoutes);
+app.use('/api/payment', paymentRoutes);
+app.use('/api/pricing', pricingRoutes);
+app.use('/api/tokens', tokenRoutes);
+app.use('/api/memory', memoryRoutes);
+app.use('/api/feedback', feedbackRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/currency', currencyRoutes);
+app.use('/api/evolution', evolutionAdminRoutes);
+app.use('/api/user/profile', userProfileRoutes);  // NEW
+app.use('/api/connections', connectionsRoutes);
+app.use('/api/providers', providersRoutes);
+app.use('/api/chat/audio', audioRoutes);  // Audio generation (TTS)
+app.use('/api/actions', actionsRoutes);
+app.use('/api/devices', devicesRouter);
+app.use('/api/tasks', tasksRouter);
+app.use('/api/browser', browserRouter);
+app.use('/api/models', modelsRoutes);
+app.use('/api/expression', expressionRoutes);
+app.use('/api/prompt', promptRoutes);
+app.use('/api/chat/media', mediaRoutes);
+app.use('/api/chat/office', officeRoutes);  // Office / Document generation
+
+app.use(errorHandler);
+
+async function startup() {
+  // P0: In production a missing JWT_SECRET allows anyone to forge bearer tokens
+  // (the dev default is a well-known constant). Fail fast, like VAULT_KEY.
+  if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+    console.error('[BOOT] FATAL: JWT_SECRET environment variable is required in production');
+    process.exit(1);
+  }
+
+  console.log('[BOOT] Waking 4 Postgres databases (Layerbase poolers)...');
+  const dbOk = await wakeDatabase(5);
+  if (!dbOk) {
+    console.error('[BOOT] One or more databases unreachable after retries. Continuing anyway.');
+  }
+  await ensureKnowledgeSchema().catch((err) =>
+    console.error('[BOOT] Knowledge schema bootstrap error:', err),
+  );
+  await ensureUserSchema().catch((err) =>
+    console.error('[BOOT] User schema bootstrap error:', err),
+  );
+  await ensureConversationSchema().catch((err) =>
+    console.error('[BOOT] Conversation schema bootstrap error:', err),
+  );
+  await ensureOverflowSchema().catch((err) =>
+    console.error('[BOOT] Overflow schema bootstrap error:', err),
+  );
+  // Keep all 4 poolers warm so a user hitting the UI after idle minutes
+  // does not stall on a cold reconnect.
+  startKeepAlive(60_000);
+
+  // Load dynamic configuration from DB (models, packs, pricing)
+  initDynamicConfig().catch((err) =>
+    console.warn('[BOOT] Dynamic config init warning:', err),
+  );
+  seedDefaultScenarios().catch((err) =>
+    console.warn('[BOOT] Scenario seeding warning:', err),
+  );
+
+  startRateUpdater();
+  // Provider connections & API key pools from DB (admin-managed at
+  // /admin/models). One-time env seed keeps existing deployments working
+  // until keys are re-entered in the admin UI; env vars can then be removed.
+  // Key pools must be built AFTER the connection load (they source keys
+  // from it); on load failure fall back to an env-only pool build.
+  loadProviderConfigs()
+    .then(() => initApiKeyPools())
+    .catch((err) => {
+      console.warn('[BOOT] Provider config load warning, env fallback:', err?.message ?? err);
+      initApiKeyPools();
+    });
+  startOrderCleanupJob();
+  registerAllConnectors();
+  // P0-10: Require VAULT_KEY in production ONLY. In dev, a missing key falls
+  // back to the insecure JWT_SECRET-derived key (vault.ts) rather than
+  // hard-exiting — a missing dev secret must not prevent startup.
+  const isProd = process.env.NODE_ENV === 'production';
+  try {
+    initVault(isProd);
+    if (!isProd && !process.env.VAULT_KEY) {
+      console.warn('[BOOT] VAULT_KEY not set — dev mode uses insecure key derivation');
+    }
+  } catch (err: any) {
+    console.error('[BOOT] Vault initialization failed:', err.message);
+    process.exit(1);
+  }
+
+  // Dynamic pricing bootstrap + daily margin job (spec R3, R4, R5).
+  // 冷启动错峰：等 10s 让数据库连接稳定 + 避开与用户请求抢锁，
+  // 否则 P2028/P1008 会直接污染 /auth 路径。
+  const BOOT_DELAY_MS = 10_000;
+  setTimeout(() => {
+    seedProviderPricingFromEnv().catch((err) =>
+      console.warn('[PRICING] seedProviderPricingFromEnv warning:', err),
+    );
+    bootstrapInitialPricingVersion().then((r) => {
+      if (r.ok) console.log(`[PRICING] active pricing version ${r.code}`);
+    }).catch((err) => console.error('[PRICING] bootstrap error:', err));
+  }, BOOT_DELAY_MS);
+
+  // Model output-limit discovery: boot-time full check + 30-day refresh.
+  // Runs at init ONLY — never in the request path. Staggered behind the
+  // pricing bootstrap so it does not race database write locks at boot.
+  //
+  // NOTE: Node's 32-bit timer cap is 2_147_483_647 ms (2^31 - 1). A
+  // 30-day (2_592_000_000) or even 29-day (2_505_600_000) interval
+  // overflows and clamps to 1 ms, which turns a periodic refresh into a
+  // "refresh every millisecond" hot loop that OOMs the process. Use 24
+  // days (2_073_600_000 ms) to stay safely under the cap.
+  const MODEL_LIMITS_REFRESH_MS = 24 * 24 * 60 * 60 * 1000; // 2_073_600_000
+  setTimeout(() => {
+    initializeModelLimits().catch((err) =>
+      console.warn('[BOOT] Model limits init warning:', err),
+    );
+  }, BOOT_DELAY_MS / 2);
+  setInterval(() => {
+    initializeModelLimits().catch((err) =>
+      console.warn('[ModelLimits] 30-day refresh warning:', err),
+    );
+  }, MODEL_LIMITS_REFRESH_MS);
+
+  setInterval(() => {
+    runDailyPricingJob().then((report) => {
+      if (report.published) console.log(`[PRICING] published ${report.code}`);
+    }).catch((err) => console.error('[PRICING] daily job error:', err));
+  }, 24 * 60 * 60 * 1000);
+  setTimeout(() => {
+    runDailyPricingJob().catch((err) => console.error('[PRICING] startup job error:', err));
+  }, 60000 + BOOT_DELAY_MS);
+
+  setInterval(() => {
+    runCleanupCycle().catch((err) => console.error('[CLEANUP] Error:', err));
+  }, 6 * 60 * 60 * 1000);
+
+  setTimeout(() => {
+    runCleanupCycle().catch((err) => console.error('[CLEANUP] Startup cleanup error:', err));
+  }, 30000);
+
+  // Periodically prune in-memory agent sessions (memory-leak guard)
+  setInterval(() => {
+    cleanupSessions();
+  }, 30 * 60 * 1000);
+
+  // Start knowledge research worker pool
+  initWorkerPool({ maxConcurrency: parseInt(process.env.RESEARCH_MAX_CONCURRENCY || '5') }).catch((err) =>
+    console.warn('[BOOT] Worker pool init warning:', err),
+  );
+
+  // Knowledge self-repair lifecycle: periodic refresh scheduler. Enqueues
+  // due RefreshTask rows; the worker pool (above) claims + executes them.
+  // Bypassed entirely when KNOWLEDGE_LIFECYCLE_ENABLED=false.
+  if (process.env.KNOWLEDGE_LIFECYCLE_ENABLED !== 'false') {
+    const { runRefreshScheduler } = require('./services/knowledgeLifecycle/refreshScheduler');
+    const REFRESH_TICK_MS = 10 * 60 * 1000; // 10 min
+    setTimeout(() => {
+      runRefreshScheduler(200).then((r: any) => {
+        if (r?.dispatched) console.log(`[KNOWLEDGE-LIFECYCLE] refresh dispatch cycle=${r.cycle} dispatched=${r.dispatched} skipped=${r.skipped}`);
+      }).catch((err: any) => console.warn('[KNOWLEDGE-LIFECYCLE] scheduler error:', err?.message ?? err));
+    }, 30000);
+    setInterval(() => {
+      runRefreshScheduler(200).then((r: any) => {
+        if (r?.dispatched) console.log(`[KNOWLEDGE-LIFECYCLE] refresh dispatch cycle=${r.cycle} dispatched=${r.dispatched} skipped=${r.skipped}`);
+      }).catch((err: any) => console.warn('[KNOWLEDGE-LIFECYCLE] scheduler error:', err?.message ?? err));
+    }, REFRESH_TICK_MS);
+  }
+
+  // 敏感标记落档的保留期清理：启动后立即跑一次，之后每 24h 一次。
+  // 删除超过 retentionUntil 的 FlaggedConversation 行（默认 180 天，
+  // 可用 SAFETY_FLAG_RETENTION_DAYS 调整）。
+  const { cleanupExpiredFlags } = require('./services/sensitiveGuard');
+  const runFlagCleanup = () => {
+    cleanupExpiredFlags().then((n: number) => {
+      if (n > 0) console.log(`[SAFETY] purged ${n} expired flagged conversations`);
+    }).catch((err: any) => console.warn('[SAFETY] flag cleanup error:', err?.message ?? err));
+  };
+  setTimeout(runFlagCleanup, 60000);
+  setInterval(runFlagCleanup, 24 * 60 * 60 * 1000);
+
+  app.listen(env.PORT, () => console.log(`[BOOT] OmniTask server running on port ${env.PORT}`));
+}
+
+startup();

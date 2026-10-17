@@ -1,0 +1,9 @@
+{
+  "_comment": "Provider USD cost parameters per 1,000,000 tokens (input/output).",
+  "_instruction": "Supply real negotiated rates via PROVIDER_COST_TABLE_JSON env var.",
+  "google": { "input": 0.10, "output": 0.40, "cached": 0.05 },
+  "openai": { "input": 0.50, "output": 1.50 },
+  "deepseek": { "input": 0.14, "output": 0.28 },
+  "xiaomi": { "input": 0.02, "output": 0.08 },
+  "anthropic": { "input": 0.80, "output": 2.40 }
+}

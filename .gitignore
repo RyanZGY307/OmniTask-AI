@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Build / runtime output
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+
+# Databases & local data (SQLite etc.)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+server/data/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# AI local config (machine-specific, regenerable)
+.aicode/
+*.local
+
+# Logs & OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

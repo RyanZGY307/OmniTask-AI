@@ -1,0 +1,678 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ================================================================
+   ROOT — Light mode default
+   ================================================================ */
+:root {
+  --code-bg: #1e1e24;
+  --bg: #f8f9fc;
+  --surface: #ffffff;
+  --surface-hover: #f1f3f8;
+  --surface-light: #ffffff;
+  --border: #e2e5ed;
+  /* 强调色 = 与背景相反：浅色模式近黑（与 --text-primary 同族） */
+  --accent: #0a0a0c;
+  --accent-hover: #2a2a30;
+  --accent-dim: #8b8b95;
+  --accent-rgb: 10, 10, 12;
+  /* 点缀色（图标/指示线/装饰图形）：浅色模式用黑 */
+  --accent-figure: #0a0a0c;
+  /* accent 填充面之上的文字色（如 C 头像、主按钮）：浅色模式白字 */
+  --on-accent: #ffffff;
+  --text-primary: #0a0a0c;
+  --text-muted: #4b5563;
+  --error: #ef4444;
+  --success: #22c55e;
+  --warning: #f59e0b;
+
+  /* ---- 设计令牌（普通 UI）：浅色 = 白卡 + 发丝边框 + 极简投影；深色由 .dark 覆盖 ---- */
+  --card: var(--surface);
+  --card-border: var(--border);
+  --card-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 4px 14px rgba(16, 24, 40, 0.06);
+  --card-shadow-lg: 0 2px 6px rgba(16, 24, 40, 0.05), 0 16px 40px rgba(16, 24, 40, 0.10);
+  --glow-focus: 0 0 0 3px rgba(10, 10, 12, 0.14);
+  --hairline: rgba(10, 10, 12, 0.08);
+  --dur-150: 150ms;
+  --dur-200: 200ms;
+  --dur-300: 300ms;
+  --ease-out-std: cubic-bezier(0.2, 0, 0, 1);
+
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+
+  /* ---- iOS 26 Liquid Glass tokens ---- */
+  /* 弹性（spring）与非线性（nonlinear decel）缓动 */
+  --ease-ios-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-ios-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-ios-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-ios-elastic: cubic-bezier(0.68, -0.55, 0.27, 1.55);
+  /* 连续圆角（--ios-radius-scale 0..1，由设置驱动；超椭圆近似） */
+  --ios-radius-scale: 0.55;
+  --radius-card: calc(4px + var(--ios-radius-scale) * 34px);
+  --radius-card-lg: calc(8px + var(--ios-radius-scale) * 40px);
+  --radius-hero: calc(12px + var(--ios-radius-scale) * 44px);
+  /* 分层玻璃阴影（--ios-shadow-scale 0..1，由设置驱动） */
+  --ios-shadow-scale: 0.36;
+  /* 弹性（--ios-elasticity 0..1）与非线性运动（--ios-motion 0/1），均由设置驱动 */
+  --ios-elasticity: 0.62;
+  --ios-motion: 1;
+  /* 弹性/运动对应的过渡时长（--ios-motion 关闭时归零 → 无过渡） */
+  --ios-t-spring: calc(0.4s * var(--ios-motion));
+  --ios-t-out: calc(0.45s * var(--ios-motion));
+  --ios-t-fast: calc(0.2s * var(--ios-motion));
+}
+
+.dark {
+  --code-bg: #111114;
+  --bg: #0a0a0c;
+  --surface: #111114;
+  --surface-hover: #1a1a1f;
+  --surface-light: #111114;
+  --border: #1e1e24;
+  /* 强调色 = 与背景相反：深色模式暖白（与 --text-primary 同族） */
+  --accent: #f0ece4;
+  --accent-hover: #ffffff;
+  --accent-dim: #6f6f78;
+  --accent-rgb: 240, 236, 228;
+  /* 点缀色：深色模式用白 */
+  --accent-figure: #ffffff;
+  /* accent 填充面之上的文字色：深色模式改黑，形成对比 */
+  --on-accent: #0a0a0c;
+  --text-primary: #f0ece4;
+  --text-muted: #a8a29e;
+
+
+  /* ---- 深色模式：收敛背光，改为发丝高光 + 柔和黑阴影 ---- */
+  --card: #141519;
+  --card-border: rgba(255, 255, 255, 0.09);
+  --card-shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 24px rgba(0, 0, 0, 0.5);
+  --card-shadow-lg: 0 1px 0 rgba(255, 255, 255, 0.05), 0 18px 48px rgba(0, 0, 0, 0.6);
+  --glow-focus: 0 0 0 3px rgba(240, 236, 228, 0.18);
+  --hairline: rgba(255, 255, 255, 0.08);
+}
+
+
+/* ================================================================
+    ONBOARDING
+    ================================================================ */
+
+.onboarding-root {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--bg);
+  overflow-y: auto;
+  position: relative;
+  transition: opacity 0.4s var(--ease-out-expo), transform 0.4s var(--ease-out-expo);
+}
+.onboarding-root.phase-visible { opacity: 1; transform: none; }
+.onboarding-root.phase-exit { opacity: 0; transform: scale(0.98); pointer-events: none; }
+
+/* Page-level entrance: material itself appears — blur recovery + scale settle,
+   not a flat opacity fade. Respects prefers-reduced-motion. */
+.onboarding-entrance {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+  animation: entranceMaterialIn 1.3s var(--ease-out-expo) both;
+  background: var(--bg);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+@keyframes entranceMaterialIn {
+  0%   { opacity: 0; transform: scale(0.94); filter: blur(24px); }
+  35%  { opacity: 0.85; filter: blur(8px); }
+  70%  { filter: blur(2px); transform: scale(1.005); }
+  100% { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+
+.entrance-brand {
+  text-align: center;
+  animation: entranceBrandReveal 1.4s var(--ease-out-expo) 0.15s both;
+}
+
+@keyframes entranceBrandReveal {
+  0%   { opacity: 0; transform: scale(0.88) translateY(8px); filter: blur(10px); }
+  55%  { opacity: 1; filter: blur(0); }
+  100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+}
+
+.entrance-glow {
+  position: absolute;
+  inset: -20%;
+  background: radial-gradient(ellipse at 50% 45%, rgba(var(--accent-rgb, 59, 130, 246), 0.10), transparent 60%);
+  animation: entranceGlowPulse 2.4s ease-in-out 0.6s both;
+  pointer-events: none;
+}
+
+@keyframes entranceGlowPulse {
+  0%   { opacity: 0; transform: scale(0.9); }
+  60%  { opacity: 1; }
+  100% { opacity: 0.85; transform: scale(1.04); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-entrance,
+  .entrance-brand,
+  .entrance-glow {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+  }
+  .onboarding-entrance { opacity: 1; }
+  .entrance-brand { opacity: 1; }
+}
+
+.onboarding-phase-wrapper {
+  width: 100%;
+  min-height: 100%;
+  transition: opacity 0.4s var(--ease-out-expo), transform 0.4s var(--ease-out-expo);
+}
+.phase-visible { opacity: 1; transform: none; }
+.phase-exit { opacity: 0; transform: scale(0.98); pointer-events: none; }
+
+.onboarding-phase {
+  width: 100%;
+  min-height: 100%;
+  position: relative;
+}
+
+
+/* ================================================================
+   DIRECTIONAL SLIDE-IN ANIMATIONS
+   ================================================================ */
+
+.anim-slide-in-top    { animation: slideInTop 0.55s var(--ease-out-expo) both; }
+.anim-slide-in-bottom { animation: slideInBottom 0.55s var(--ease-out-expo) both; }
+.anim-slide-in-left   { animation: slideInLeft 0.55s var(--ease-out-expo) both; }
+.anim-slide-in-right  { animation: slideInRight 0.55s var(--ease-out-expo) both; }
+.anim-scale-in-center { animation: scaleInCenter 0.55s var(--ease-out-expo) both; }
+
+.anim-slide-in-top    { animation-delay: 0s; }
+.anim-slide-in-bottom { animation-delay: 0.06s; }
+.anim-slide-in-left   { animation-delay: 0.1s; }
+.anim-slide-in-right  { animation-delay: 0.14s; }
+.anim-scale-in-center { animation-delay: 0.08s; }
+
+@keyframes slideInTop {
+  from { opacity: 0; transform: translateY(-28px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideInBottom {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes scaleInCenter {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.anim-fade-up { animation: fadeInUp 0.45s var(--ease-out-expo) both; }
+.anim-fade-down { animation: fadeInUp 0.45s var(--ease-out-expo) both reverse; }
+.anim-fade-in { animation: fadeInUp 0.3s var(--ease-out-expo) both; }
+.anim-slide-down { animation: slideInTop 0.4s var(--ease-out-expo) both; }
+.anim-scale-in { animation: scaleInCenter 0.4s var(--ease-out-expo) both; }
+.anim-press { transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.anim-press:active { transform: scale(0.96); }
+.anim-hover-scale { transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.anim-hover-scale:hover { transform: scale(1.03); }
+.anim-float { animation: floatY 3.2s ease-in-out infinite; }
+.anim-spin { animation: spinAnim 0.9s linear infinite; }
+.anim-pulse-soft { animation: pulseSoft 1.6s ease-in-out infinite; }
+.anim-bounce { animation: bounceDot 1.2s ease-in-out infinite; }
+.anim-dropdown { animation: dropdownIn 0.2s var(--ease-out-expo) both; }
+@keyframes floatY { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes spinAnim { to { transform: rotate(360deg); } }
+@keyframes pulseSoft { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes bounceDot { 0%, 100% { transform: translateY(0); opacity: 0.4; } 50% { transform: translateY(-3px); opacity: 1; } }
+@keyframes dropdownIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+
+/* ================================================================
+   PLAIN UI CARD SYSTEM
+   液态玻璃已移除：表面 = 不透明 --card + 柔和阴影（浅色）/ 柔光背光（深色）。
+   类名保留（glass-card / liquid-glass*）以约束改动面；弹簧物理与圆角保留。
+   ================================================================ */
+.liquid-glass {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  color: var(--text-primary);
+  box-shadow: var(--card-shadow);
+  transition:
+    transform var(--ios-t-spring) var(--ease-ios-spring),
+    box-shadow var(--dur-200) var(--ease-out-std),
+    border-color var(--dur-200) var(--ease-out-std);
+}
+.liquid-glass-subtle {
+  background: var(--bg);
+  border: 1px solid var(--card-border);
+  transition: all var(--dur-300) var(--ease-out-std);
+}
+.liquid-glass-inputbar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.04);
+}
+.dark .liquid-glass-inputbar {
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.4);
+}
+
+/* 可交互卡片：保留按压弹性 / 拖拽拉扯形变 / 回弹位移；深色模式悬停叠加柔光背光。 */
+.liquid-glass-interactive {
+  will-change: transform;
+  transition:
+    transform var(--ios-t-spring) var(--ease-ios-spring),
+    box-shadow var(--dur-200) var(--ease-out-std),
+    background var(--dur-200) var(--ease-out-std),
+    border-color var(--dur-200) var(--ease-out-std);
+}
+.liquid-glass-interactive:hover {
+  background: var(--surface-hover);
+  transform: translateY(calc(-2px * var(--ios-elasticity))) scale(calc(1 + 0.006 * var(--ios-elasticity)));
+  box-shadow: var(--card-shadow-lg);
+}
+.dark .liquid-glass-interactive:hover {
+  box-shadow: var(--card-shadow-lg), var(--glow-focus);
+}
+.liquid-glass-interactive:active {
+  transform: translateY(0) scale(calc(1 - 0.02 * var(--ios-elasticity)));
+  box-shadow: var(--card-shadow);
+  transition: transform var(--dur-150) var(--ease-out-std), box-shadow var(--dur-150) var(--ease-out-std), background var(--dur-150), border-color var(--dur-150);
+}
+.liquid-glass-strong {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card-lg);
+  color: var(--text-primary);
+  box-shadow: var(--card-shadow-lg);
+}
+.liquid-glass-sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+/* 通用卡片（原液态玻璃卡片，现为普通卡片 + 柔和投影） */
+.glass-card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  color: var(--text-primary);
+  box-shadow: var(--card-shadow);
+  transition:
+    transform var(--ios-t-spring) var(--ease-ios-spring),
+    box-shadow var(--dur-200) var(--ease-out-std),
+    border-color var(--dur-200) var(--ease-out-std);
+}
+.glass-card-sm {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: calc(var(--radius-card) * 0.8);
+  color: var(--text-primary);
+  box-shadow: var(--card-shadow);
+  transition:
+    transform var(--ios-t-spring) var(--ease-ios-spring),
+    box-shadow var(--dur-200) var(--ease-out-std),
+    border-color var(--dur-200) var(--ease-out-std);
+}
+
+/* ================================================================
+    ADMIN 响应式表格：窄屏（≤640px）行转卡片，每格用 data-label 显示字段名
+   ================================================================ */
+@media (max-width: 640px) {
+  .admin-table { min-width: 0 !important; }
+  .admin-table thead { display: none; }
+  .admin-table tr {
+    display: block;
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-card);
+    margin: 0 0 10px;
+    padding: 6px 2px;
+    background: var(--card);
+  }
+  .admin-table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 12px !important;
+    border: none !important;
+    text-align: right;
+  }
+  .admin-table td::before {
+    content: attr(data-label);
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: left;
+    flex-shrink: 0;
+  }
+}
+
+/* 消息正文（Markdown）：颜色跟随主题，修复深色模式下文字消失 */
+.markdown-content {
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.markdown-content p { margin: 0.35em 0; }
+.markdown-content code {
+  background: var(--code-bg);
+  color: #e4e6ef;
+  border-radius: 6px;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+.markdown-content pre {
+  background: var(--code-bg);
+  color: #e4e6ef;
+  border-radius: 12px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.markdown-content pre code { background: none; padding: 0; }
+.markdown-content ul, .markdown-content ol { padding-left: 1.2em; margin: 0.4em 0; }
+.markdown-content a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(var(--accent-rgb), 0.35);
+  text-underline-offset: 2px;
+}
+.markdown-content a:hover { text-decoration-color: rgba(var(--accent-rgb), 0.7); }
+.markdown-content h1, .markdown-content h2, .markdown-content h3 { margin: 0.6em 0 0.3em; }
+
+/* 上下文菜单（原玻璃浮层，现为普通卡片） */
+.context-menu-glass {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card-lg);
+  box-shadow: var(--card-shadow-lg);
+}
+
+.context-menu-item {
+  border-radius: 10px;
+  transition: background .15s ease, opacity .15s ease;
+}
+.context-menu-item:hover { background: var(--surface-hover); }
+.context-menu-item:active { opacity: .85; }
+.context-menu-item:focus-visible { box-shadow: var(--glow-focus); outline: none; }
+
+/* 统一下拉框：隐藏原生样式，chevron 指示 */
+.ui-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234b5563' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px !important;
+}
+.dark .ui-select {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23a8a29e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+/* ================================================================
+   TYPOGRAPHY & SURFACE UTILITIES
+   全站统一字号/字重/字距；颜色只承担语义与图表数据编码，
+   强调靠字重、对比与留白，不再靠色相。
+   ================================================================ */
+:root {
+  --fs-caption: 11px;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-display: 28px;
+  --track-display: -0.022em;
+  --track-body: -0.011em;
+}
+.caps-label {
+  font-size: var(--fs-caption);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+.surface-panel {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
+}
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--glow-focus);
+}
+
+/* 非线性入场 stagger：容器子项依次入场（--ease-out-expo），最多 12 项 */
+.anim-stagger > * { animation: staggerIn 0.5s var(--ease-out-expo) both; }
+.anim-stagger > *:nth-child(2) { animation-delay: 40ms; }
+.anim-stagger > *:nth-child(3) { animation-delay: 80ms; }
+.anim-stagger > *:nth-child(4) { animation-delay: 120ms; }
+.anim-stagger > *:nth-child(5) { animation-delay: 160ms; }
+.anim-stagger > *:nth-child(6) { animation-delay: 200ms; }
+.anim-stagger > *:nth-child(7) { animation-delay: 240ms; }
+.anim-stagger > *:nth-child(8) { animation-delay: 280ms; }
+.anim-stagger > *:nth-child(9) { animation-delay: 320ms; }
+.anim-stagger > *:nth-child(10) { animation-delay: 360ms; }
+.anim-stagger > *:nth-child(11) { animation-delay: 400ms; }
+.anim-stagger > *:nth-child(12) { animation-delay: 440ms; }
+/* 入场延迟阶梯（配合 anim-fade-up / anim-slide-in-* 使用） */
+.anim-delay-1 { animation-delay: 60ms; }
+.anim-delay-2 { animation-delay: 120ms; }
+.anim-delay-3 { animation-delay: 180ms; }
+.anim-delay-4 { animation-delay: 240ms; }
+.anim-delay-5 { animation-delay: 300ms; }
+
+@keyframes staggerIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- 消息与列表小件 ---- */
+.typing-cursor::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: caretBlink 1s steps(2, start) infinite;
+}
+@keyframes caretBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+.file-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  min-height: 36px;
+  font-size: var(--fs-xs);
+  color: var(--text-primary);
+  background: var(--surface-hover);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  transition:
+    background var(--dur-150) var(--ease-out-std),
+    border-color var(--dur-150) var(--ease-out-std),
+    transform var(--dur-150) var(--ease-spring);
+}
+.file-download-btn:hover { border-color: var(--accent-dim); }
+.file-download-btn:active { transform: scale(0.97); }
+
+.cost-indicator {
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 9999px;
+  border: 1px solid var(--card-border);
+}
+
+.credit-pill {
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--surface-hover);
+  border: 1px solid var(--card-border);
+  border-radius: 9999px;
+  padding: 2px 8px;
+}
+
+/* ================================================================
+   REDUCED MOTION
+   ================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ================================================================
+   CORE AGGREGATION — CHARACTER-BY-CHARACTER REVEAL
+   ================================================================ */
+
+@keyframes coreCharReveal {
+  0%   { opacity: 0; transform: translateY(14px) scale(0.7); filter: blur(6px); }
+  50%  { filter: blur(1px); }
+  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+
+.core-logo-char {
+  display: inline-block;
+  will-change: transform, opacity, filter;
+}
+
+
+/* ================================================================
+   CODE BLOCK — 统一外观（修复"突兀黑框"：圆角裁切 + 主题化头部）
+   ================================================================ */
+
+.code-block-wrapper {
+  margin: 10px 0;
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--code-bg, #1e1e24);
+  box-shadow: var(--card-shadow);
+  transition: box-shadow var(--ios-t-out) var(--ease-ios-out), border-color var(--ios-t-out) var(--ease-ios-out);
+}
+
+.code-block-wrapper pre {
+  margin: 0 !important;
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px 6px 14px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  background: var(--surface-light);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 长代码块折叠：限制高度 + 渐变遮罩，减少首屏信息压力 */
+.code-block-collapsed {
+  max-height: 480px;
+  overflow: hidden;
+  position: relative;
+}
+.code-block-collapsed::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: linear-gradient(to bottom, transparent, var(--code-bg, #1e1e24));
+  pointer-events: none;
+}
+
+/* 行号弱化：降低视觉权重，代码内容为第一阅读层 */
+.code-block-wrapper pre span.line-number,
+.code-block-wrapper .line-number {
+  color: rgba(148, 163, 184, 0.35);
+  user-select: none;
+}
+
+/* ================================================================ */
+/* ================================================================
+   iOS 26 GLOBAL TOUCH SOFT-LIGHT（触摸柔和光效）
+   A soft specular highlight follows the pointer across glass surfaces.
+   Driven by --ios-glow-x / --ios-glow-y (element-local %) and
+   --ios-glow-o (0..1 opacity) written by lib/iosGlow.ts. Idle = 0.
+   ================================================================ */
+.liquid-glass::before,
+.glass-card::before,
+.glass-card-sm::before,
+.glass-btn::before,
+.glass-popover-panel::before,
+.context-menu-glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  mix-blend-mode: soft-light;
+  background: radial-gradient(
+    var(--ios-glow-radius, 190px) circle at var(--ios-glow-x, -9999px) var(--ios-glow-y, -9999px),
+    rgba(255, 255, 255, calc(var(--ios-glow-o, 0) * 0.9)),
+    rgba(255, 255, 255, calc(var(--ios-glow-o, 0) * 0.25)) 28%,
+    transparent 60%
+  );
+  opacity: var(--ios-glow-o, 0);
+}
+
+/* solid fallback strips the moving light; the surface stays a flat material */
+/* ================================================================ */
+
+/* 在聊天中查找：命中消息的闪烁高亮（滚动到位后短暂显示 accent 底色） */
+.msg-flash {
+  border-radius: 16px;
+  animation: msg-flash 1.6s ease-out;
+}
+@keyframes msg-flash {
+  0%, 25% { background: rgba(var(--accent-rgb, 59, 130, 246), 0.18); }
+  100% { background: transparent; }
+}

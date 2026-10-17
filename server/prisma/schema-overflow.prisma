@@ -1,0 +1,48 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/client-overflow"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_OVERFLOW")
+}
+
+// ============================================================
+// Overflow — catch-all store
+//
+// This database is the overflow target for any of the other three
+// (user / conversation / knowledge). When a primary write to its
+// owning datasource fails (disk full, connection down), the app
+// layer re-routes the write here into a mirror table. To keep the
+// overflow schema useful for arbitrary re-routing, it carries a
+// generic mirror table + a row-level routing audit log so data can
+// be re-homed later without loss.
+// ============================================================
+
+// Generic overflow payload: stores any model's data as JSON plus a
+// tag so a re-home pass can route rows back to their original table.
+model OverflowRow {
+  id           String   @id @default(cuid())
+  sourceTable  String   // which primary table the row originally belonged to
+  sourceDb     String   // which primary DB it came from (user|conversation|knowledge)
+  payload      String   // JSON-encoded row data
+  userId       String?  // owning user, for re-homing
+  createdAt    DateTime @default(now())
+
+  @@index([sourceTable, sourceDb])
+  @@index([userId])
+}
+
+// Audit log of every overflow re-route (who moved what when).
+model OverflowAudit {
+  id           String   @id @default(cuid())
+  sourceTable  String
+  sourceDb     String
+  targetDb     String @default("overflow")
+  reason       String   // e.g. "P1001 unreachable", "disk full", "manual"
+  rowCount     Int      @default(1)
+  createdAt    DateTime @default(now())
+
+  @@index([sourceDb, sourceTable])
+}
