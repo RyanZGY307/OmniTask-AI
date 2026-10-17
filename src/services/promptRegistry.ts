@@ -71,6 +71,7 @@ export async function upsertAtom(input: PromptAtomInput): Promise<{ id: string; 
       deprecated_by: input.deprecated_by,
     },
   });
+  invalidateActiveVersions();
   return { id: result.id, status: result.status };
 }
 
@@ -85,6 +86,7 @@ export async function createAtomVersion(input: AtomVersionInput): Promise<string
       published_at: input.metadata?.published ? new Date() : undefined,
     },
   });
+  invalidateActiveVersions();
   return version.id;
 }
 
@@ -101,6 +103,7 @@ export async function publishAtomVersion(atomId: string, version: string, create
     where: { id: atomId },
     data: { version, status: 'published', updatedAt: new Date() },
   });
+  invalidateActiveVersions();
 }
 
 export async function getPublishedAtom(id: string): Promise<any | null> {
@@ -122,19 +125,85 @@ export async function getAtomVersions(atomId: string): Promise<any[]> {
 
 export async function setAtomStatus(atomId: string, status: AtomStatus): Promise<void> {
   await prismaKnowledge.promptAtom.update({ where: { id: atomId }, data: { status } });
+  invalidateActiveVersions();
 }
 
-export async function getActiveVersions(): Promise<Record<string, { version: string; instruction: string }>> {
+// ================================================================
+// Active-version snapshot cache
+//
+// composePrompt() runs on every chat request, so getActiveVersions() is a
+// per-request read of the whole published-atom set. The snapshot is cached
+// in-process with a short TTL and is explicitly invalidated by every
+// mutation in this module. TTL bounds staleness for out-of-process
+// writers; the hooks make in-process publish/disable visible immediately.
+//
+// Safety: this cache only ever mirrors the DB — it is never consulted to
+// skip a permission / compatibility / status check. A stale entry can only
+// omit a freshly published atom (which fails closed to base capability),
+// never admit a disabled one, because disabled atoms are absent from the
+// query itself and every mutation drops the snapshot.
+// ================================================================
+
+export interface ActiveVersionEntry {
+  version: string;
+  instruction: string;
+  category: string;
+  priority: number;
+}
+
+const ACTIVE_VERSIONS_TTL_MS = Number(process.env.CORTX_ATOM_CACHE_TTL_MS ?? 30_000);
+
+let activeVersionsCache: { at: number; value: Record<string, ActiveVersionEntry> } | null = null;
+let activeVersionEpoch = 0;
+
+/** Drop the cached snapshot. Called by every atom/version mutation. */
+export function invalidateActiveVersions(): void {
+  activeVersionsCache = null;
+  activeVersionEpoch += 1;
+}
+
+/** Monotonic counter bumped on every invalidation. */
+export function getActiveVersionsEpoch(): number {
+  return activeVersionEpoch;
+}
+
+export async function getActiveVersions(opts?: { force?: boolean }): Promise<Record<string, ActiveVersionEntry>> {
+  const now = Date.now();
+  if (!opts?.force && activeVersionsCache && now - activeVersionsCache.at < ACTIVE_VERSIONS_TTL_MS) {
+    return activeVersionsCache.value;
+  }
+
   const atoms = await prismaKnowledge.promptAtom.findMany({
     where: { status: 'published' },
     include: { versions: { where: { status: 'published' }, take: 1, orderBy: { created_at: 'desc' } } },
   });
-  const out: Record<string, { version: string; instruction: string }> = {};
-  for (const a of atoms) {
-    const v = a.versions[0];
-    if (v) out[a.id] = { version: v.version, instruction: v.instruction };
+  const out: Record<string, ActiveVersionEntry> = {};
+  for (const a of atoms as any[]) {
+    const v = a.versions?.[0];
+    if (!v) continue;
+    out[a.id] = {
+      version: v.version,
+      instruction: v.instruction,
+      // category + priority were previously dropped here, so composePrompt's
+      // grouping fell back to 'core' for every atom, collapsing the whole
+      // [SYSTEM]/[TASK]/[KNOWLEDGE] section layout into one group.
+      category: a.category || 'core',
+      priority: typeof a.priority === 'number' ? a.priority : 0,
+    };
   }
+
+  activeVersionsCache = { at: now, value: out };
   return out;
+}
+
+/** Ops/test hook: inspect cache state without touching the DB. */
+export function getActiveVersionsCacheStats(): { cached: boolean; ageMs: number | null; epoch: number; size: number } {
+  return {
+    cached: activeVersionsCache !== null,
+    ageMs: activeVersionsCache ? Date.now() - activeVersionsCache.at : null,
+    epoch: activeVersionEpoch,
+    size: activeVersionsCache ? Object.keys(activeVersionsCache.value).length : 0,
+  };
 }
 
 export async function compareVersions(atomId: string, v1: string, v2: string): Promise<{ v1: any; v2: any }> {
