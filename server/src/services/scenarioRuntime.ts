@@ -17,7 +17,12 @@ import { runP3, p3HardGate, p3ExploitExplore, type CandidateAtom } from './scena
 import { runP4 } from './scenarioWorkers/p4PromptGenerator';
 import { runS2, type S2CandidateSkill } from './scenarioWorkers/s2SkillJudge';
 import { runS4, type S4Output } from './scenarioWorkers/s4SkillSelection';
-import { retrieveAll } from './scenarioWorkers/scenarioRetrieval';
+import {
+  retrieveAll,
+  retrieveCandidateScenarios,
+  retrieveCandidateAtoms,
+  retrieveCandidateSkills,
+} from './scenarioWorkers/scenarioRetrieval';
 
 export interface ScenarioRuntimeInput {
   userMessage: string;
@@ -69,17 +74,19 @@ export async function runScenarioRuntime(input: ScenarioRuntimeInput): Promise<S
       reason: '',
     };
     const retrievalInput = { p1, p2: stubP2 };
-    const { scenarios } = await retrieveAll(retrievalInput).catch(() => ({ scenarios: [], atoms: [], skills: [] }));
+    const scenarios = await retrieveCandidateScenarios(retrievalInput).catch(() => []);
     const p2 = await runP2(p1, scenarios);
 
     // Rule-layer executes P2's proposal (create/merge/split) — see below.
     const scenarioId = await executeP2Resolution(p2);
 
-    // Step 3: parallel retrieval (prompts + skills)
+    // Step 3: parallel retrieval (prompts + skills).
+    // These two calls used to each invoke retrieveAll(), which re-ran the
+    // scenario query as well — 2 wasted scenario queries per request.
     const retrievalInput2: any = { p1, p2 };
     const [atomCandidates, skillCandidates] = await Promise.all([
-      retrieveAll(retrievalInput2).then((r) => r.atoms).catch(() => [] as CandidateAtom[]),
-      retrieveAll(retrievalInput2).then((r) => r.skills).catch(() => [] as S2CandidateSkill[]),
+      retrieveCandidateAtoms(retrievalInput2).catch(() => [] as CandidateAtom[]),
+      retrieveCandidateSkills(retrievalInput2).catch(() => [] as S2CandidateSkill[]),
     ]);
     const atoms = atomCandidates;
     const skills = skillCandidates;
