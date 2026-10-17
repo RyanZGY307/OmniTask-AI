@@ -1,0 +1,41 @@
+{
+  "name": "omnitask-server",
+  "version": "3.9.0",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma && prisma generate --schema prisma/schema-user.prisma && prisma generate --schema prisma/schema-conversation.prisma && prisma generate --schema prisma/schema-knowledge.prisma && prisma generate --schema prisma/schema-overflow.prisma",
+    "prisma:migrate:user": "prisma migrate dev --schema prisma/schema-user.prisma",
+    "prisma:migrate:knowledge": "prisma migrate dev --schema prisma/schema-knowledge.prisma",
+    "postinstall": "npm run prisma:generate"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "@types/pdfkit": "^0.17.6",
+    "adm-zip": "^0.6.1",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "docx": "^9.8.1",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.4.0",
+    "pdfkit": "^0.20.2",
+    "playwright": "^1.63.0",
+    "ppt-codec": "^2.2.22",
+    "pptxgenjs": "^4.0.1",
+    "prisma": "^6.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

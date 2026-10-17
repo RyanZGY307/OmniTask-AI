@@ -1,0 +1,808 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/client-knowledge"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_KNOWLEDGE")
+}
+
+// ==================== Knowledge Base ====================
+
+model KnowledgeFolder {
+  id          String        @id @default(cuid())
+  name        String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  entries     KnowledgeBase[]
+}
+
+model KnowledgeBase {
+  id            String           @id @default(cuid())
+  title         String
+  content       String
+  category      String
+  evidenceLevel String           @default("C")
+  region        String?
+  product       String?
+  version       String?
+  source        String?
+  folderId      String?
+  folder        KnowledgeFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  isActive      Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+}
+
+// ==================== Document Chunks (RAG) ====================
+// Note: userId is a logical reference only (no FK to User table in cortex_user DB)
+
+model DocumentChunk {
+  id         String   @id @default(cuid())
+  sourceId   String
+  sourceType String
+  userId     String?
+  content    String
+  title      String?
+  language   String?
+  metadata   String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  @@index([sourceType, sourceId])
+  @@index([userId])
+  @@index([isActive])
+}
+
+// ==================== Skills ====================
+
+model Skill {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  prompt      String
+  category    String?
+  isActive    Boolean  @default(true)
+  // S1 semantic metadata (rule-written, AI never publishes a formal Skill)
+  capabilities       String @default("[]")  // e.g. ["python_data_analysis"]
+  constraints        String @default("[]")
+  applicable_domains String @default("[]")
+  applicable_task_types String @default("[]")
+  scenario_features  String @default("[]")
+  negative_applicability String @default("[]")
+  required_conditions String @default("[]")
+  optional_conditions String @default("[]")
+  // versioning + analysis state
+  version        Int      @default(1)
+  analysisStatus String   @default("pending")  // pending | analyzing | analyzed | failed
+  lastAnalyzedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ==================== Legal Rules ====================
+
+model LegalRule {
+  id       String @id @default(cuid())
+  region   String
+  content  String
+  category String
+}
+
+// ==================== Evolution Engine ====================
+
+model EvolutionSignal {
+  id              String   @id @default(cuid())
+  userId          String?
+  conversationId  String?
+  messageId       String?
+  region          String?
+  signalType      String
+  severity        String   @default("low")
+  detail          String?
+  attributed      Boolean  @default(false)
+  worthEvolving   Boolean  @default(false)
+  attribution     String?
+  createdAt       DateTime @default(now())
+  @@index([signalType, createdAt])
+  @@index([userId])
+  @@index([region])
+}
+
+model EvolutionCandidate {
+  id            String   @id @default(cuid())
+  scope         String
+  changeType    String
+  targetType    String
+  targetId      String?
+  hypothesis    String
+  content       String
+  evidenceRefs  String?
+  region        String?
+  userId        String?
+  blastRadius   String   @default("low")
+  gateLevel     Int      @default(1)
+  status        String   @default("pending")
+  confidence    Float    @default(0.5)
+  evaluationId  String?
+  promotedAt    DateTime?
+  rejectedAt    DateTime?
+  rejectReason  String?
+  canaryPercent Int      @default(0)
+  // scenario-driven runtime extensions: targetType now also accepts
+  // prompt_version | skill | scenario (besides the existing values).
+  experiment_ref   String?
+  targetScenarioId String?
+  createdBy     String   @default("evolution-engine")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([scope, status])
+  @@index([gateLevel, status])
+  @@index([region])
+  @@index([status, createdAt])
+}
+
+model EvaluationReport {
+  id               String   @id @default(cuid())
+  candidateId      String
+  securityPassed   Boolean  @default(false)
+  qualityScore     Float    @default(0)
+  regressionPassed Int      @default(0)
+  regressionFailed Int      @default(0)
+  agnesAssessment  String?
+  decision         String   @default("pending")
+  metrics          String?
+  createdAt        DateTime @default(now())
+  @@index([candidateId])
+}
+
+model RegionInsight {
+  id          String   @id @default(cuid())
+  region      String
+  insight     String
+  confidence  Float    @default(0.7)
+  candidateId String?
+  isActive    Boolean  @default(true)
+  hitCount    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([region])
+}
+
+model EvolutionAudit {
+  id          String   @id @default(cuid())
+  action      String
+  candidateId String?
+  adminId     String?
+  scope       String?
+  reason      String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+  @@index([action, createdAt])
+}
+
+model EvolutionBudget {
+  id              String   @id @default(cuid())
+  date            DateTime @unique
+  systemPoolTotal Int      @default(10000)
+  systemPoolUsed  Int      @default(0)
+  signalCount     Int      @default(0)
+  candidateCount  Int      @default(0)
+  promoteCount    Int      @default(0)
+  rejectCount     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ================================================================
+// Prompt Runtime — Atom-based dynamic system prompt composition
+// ================================================================
+
+model PromptAtom {
+  id                     String  @id
+  category               String  @default("core") // core | task | research | knowledge | verification | output | scenario | domain | skill | agent
+  purpose                String  @default("")
+  priority               Int     @default(50)
+  requires               String @default("")
+  conflicts_with         String @default("")
+  compatible_with        String @default("")
+  conditions             String?
+  parent                 String?
+  extends                String @default("")
+  override               String?
+  status                 String  @default("draft") // draft | validated | published | disabled | archived
+  version                String  @default("1.0.0")
+  tags                   String @default("")
+  deprecated_by          String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  versions               PromptAtomVersion[]
+  @@index([category, status])
+  @@index([status])
+}
+
+model PromptAtomVersion {
+  id           String   @id @default(cuid())
+  atomId       String
+  atom         PromptAtom @relation(fields: [atomId], references: [id], onDelete: Cascade)
+  version      String
+  instruction  String
+  metadata     String?
+  status       String   @default("draft") // draft | published | superseded
+  created_by   String?
+  published_at DateTime?
+  created_at   DateTime @default(now())
+  @@unique([atomId, version])
+  @@index([atomId, version])
+  @@index([atomId, status])
+  @@index([atomId, created_at])
+}
+
+model Scenario {
+  id              String   @id
+  name            String
+  description     String?
+  category        String   @default("general")
+  tags            String @default("")
+  required_atoms  String @default("")
+  optional_atoms  String @default("")
+  exclude_atoms   String @default("")
+  max_atoms       Int      @default(12)
+  priority        Int      @default(50)
+  status          String   @default("published") // published | experimental | deprecated | merged
+  // Scenario tree + origin (scenario-driven runtime)
+  path            String?  // e.g. "coding/android/runtime"
+  parent_id       String?
+  origin          String   @default("seed") // seed | ai_suggested | admin_created | experiment_promoted
+  experiment_count Int     @default(0)
+  first_seen_at   DateTime?
+  last_confirmed_at DateTime?
+  status_reason   String?
+  merged_into_id  String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  @@index([category, status])
+  @@index([status])
+  @@index([parent_id])
+  @@index([path])
+}
+
+model PromptCompositionPlan {
+  id                    String   @id @default(cuid())
+  compositionHash       String   @unique
+  scenarioId            String?
+  userMessage           String
+  selected_atom_ids     String @default("")
+  removed_atom_ids      String @default("")
+  conflict_details      String?
+  dependency_details    String?
+  knowledge_required    Boolean  @default(false)
+  verification_required Boolean  @default(false)
+  output_format         String?
+  metadata              String?
+  created_at            DateTime @default(now())
+  @@index([compositionHash])
+  @@index([created_at])
+}
+
+model PromptTrace {
+  id                   String   @id @default(cuid())
+  requestId            String
+  traceId              String
+  userId               String?
+  scenarioId           String?
+  task                 String?
+  selected_atoms       String @default("")
+  atom_versions        String?
+  removed_atoms        String @default("")
+  conflicts            String?
+  dependencies         String?
+  knowledge_state      String?
+  knowledge_sources    String?
+  verification_state   String?
+  final_prompt_hash    String
+  target_model         String?
+  composition_plan_id  String?
+  decision_id          String?  // links to SelectionDecision (scenario-driven runtime)
+  status               String   @default("created") // created | composing | composed | failed | degraded
+  error_message        String?
+  duration_ms          Int?
+  created_at           DateTime @default(now())
+  @@index([traceId])
+  @@index([userId, created_at])
+  @@index([requestId])
+  @@index([status, created_at])
+}
+
+model ScenarioRelation {
+  id            String   @id @default(cuid())
+  source_id     String
+  target_id     String
+  relation_type String   // similar_to | related_to | split_from | inherited_from
+  confidence    Float    @default(0.5)
+  created_at    DateTime @default(now())
+  @@index([source_id])
+  @@index([target_id])
+}
+
+model ScenarioPromptCompat {
+  id                String   @id @default(cuid())
+  scenario_id       String
+  atom_id           String
+  experiment_count  Int      @default(0)
+  unique_user_count Int      @default(0)
+  positive_signals  Int      @default(0)
+  negative_signals  Int      @default(0)
+  correction_count  Int      @default(0)
+  regression_count  Int      @default(0)
+  success_rate      Float    @default(0.5)
+  best_version      String?
+  lifecycle         String   @default("experimental") // experimental | stable
+  inherited         Boolean  @default(false)
+  recent_performance Float   @default(0.5)
+  last_evaluated    DateTime?
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+  @@unique([scenario_id, atom_id])
+  @@index([scenario_id, success_rate])
+}
+
+model ScenarioSkillCompat {
+  id                String   @id @default(cuid())
+  scenario_id       String
+  skill_id          String
+  skill_version     Int?
+  experiment_count  Int      @default(0)
+  unique_user_count Int      @default(0)
+  positive_signals  Int      @default(0)
+  negative_signals  Int      @default(0)
+  correction_count  Int      @default(0)
+  success_rate      Float    @default(0.5)
+  lifecycle         String   @default("experimental")
+  inherited         Boolean  @default(false)
+  recent_performance Float   @default(0.5)
+  last_evaluated    DateTime?
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+  @@unique([scenario_id, skill_id, skill_version])
+  @@index([scenario_id, success_rate])
+}
+
+model SkillScenarioLink {
+  id            String   @id @default(cuid())
+  skill_id      String
+  scenario_id   String
+  confidence    Float    @default(0.5)
+  autoDerived   Boolean  @default(true)
+  rationale     String?
+  created_at    DateTime @default(now())
+  @@unique([skill_id, scenario_id])
+  @@index([scenario_id])
+}
+
+model SelectionDecision {
+  id                   String    @id @default(cuid())
+  trace_id             String
+  user_id              String?
+  conversation_id      String?
+  scenario_id          String?
+  secondary_scenario_ids String  @default("[]")
+  selected_atom_ids    String    @default("[]")
+  selected_skill_ids   String    @default("[]")  // allowed empty
+  prompt_compat_snapshot String?
+  skill_compat_snapshot  String?
+  model                String?
+  source               String    @default("ai") // ai | rule_fallback | legacy_compiler
+  fallback_reason      String?
+  outcome              String    @default("pending")
+  experiment_id        String?
+  created_at           DateTime  @default(now())
+  @@index([trace_id])
+  @@index([scenario_id])
+}
+
+model ExperimentRun {
+  id             String    @id @default(cuid())
+  decision_id    String
+  user_id        String
+  scenario_id    String?
+  atom_versions  String    @default("{}")
+  skill_versions String    @default("[]")
+  model          String?
+  input_context_hash String?
+  follow_up_id   String?
+  feedback_signal String   @default("none")
+  outcome        String    @default("unknown")
+  attribution_ref String?
+  experiment_type String   @default("real") // real | synthetic
+  created_at     DateTime  @default(now())
+  @@index([user_id, created_at])
+  @@index([scenario_id])
+  @@index([decision_id])
+}
+
+model AttributionRecord {
+  id                  String    @id @default(cuid())
+  experiment_id       String
+  feedback_message_id String?
+  feedback_analysis   String    @default("{}") // P5 output
+  skill_assessment    String    @default("{}") // S3 output
+  attribution         String    @default("{}") // E1 signed coefficients
+  primary_cause       String?
+  scenario_precision_delta Float  @default(0)
+  worth_evolving      Boolean   @default(false)
+  created_at          DateTime  @default(now())
+  @@index([experiment_id])
+}
+
+// ================================================================
+// Knowledge Research & Enrichment Runtime — Dynamic Knowledge System
+// ================================================================
+
+// Dynamic taxonomy — open-ended, AI can create new categories
+model KnowledgeEmbedding {
+  id         String   @id @default(cuid())
+  knowledgeId String  @unique
+  vectorJson String   // L2 归一化 float[] 的 JSON
+  dim        Int
+  updatedAt  DateTime @updatedAt
+}
+
+model KnowledgeCategory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  parentId    String?
+  parent      KnowledgeCategory? @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    KnowledgeCategory[] @relation("CategoryTree")
+  description String?
+  aiCreated   Boolean  @default(false)
+  createdBy   String?
+  objects     KnowledgeObjectCategory[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([parentId])
+  @@index([aiCreated])
+}
+
+// The knowledge entity itself — "what is it", not "which version"
+model KnowledgeObject {
+  id             String                  @id @default(cuid())
+  canonicalName  String
+  objectType     String? // smart_device, software, formula, organism, concept, ...
+  description    String?
+  status         String                  @default("ACTIVE") // ACTIVE, ARCHIVED
+  categories     KnowledgeObjectCategory[]
+  variants       KnowledgeVariant[]
+  facts          KnowledgeFact[]
+  relations      KnowledgeRelation[] @relation("RelationFrom")
+  relatedTargets KnowledgeRelation[] @relation("RelationTo")
+  mediaRefs      MediaReference[]
+  researchRecs   ResearchRecord[]
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  @@unique([canonicalName])
+  @@index([objectType])
+  @@index([status])
+}
+
+// Junction: Object → Category (many-to-many)
+model KnowledgeObjectCategory {
+  objectId     String
+  object       KnowledgeObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  categoryId   String
+  category     KnowledgeCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  primary      Boolean @default(false)
+  createdAt    DateTime @default(now())
+  @@unique([objectId, categoryId])
+}
+
+// Specific version/region/variant of an object
+model KnowledgeVariant {
+  id                String          @id @default(cuid())
+  objectId          String
+  object            KnowledgeObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  region            String?
+  country           String?
+  market            String?
+  variantName       String?
+  modelNumber       String?
+  hardwareRevision  String?
+  softwareChannel   String?
+  version           String?
+  sku               String?
+  differenceSummary String?
+  status            String          @default("CONFIRMED") // CANDIDATE, CONFIRMED, DEPRECATED
+  facts             KnowledgeFact[]
+  evidence          Evidence[]
+  researchRecs      ResearchRecord[]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  @@unique([objectId, variantName, modelNumber])
+  @@index([objectId, status])
+  @@index([region, market])
+}
+
+// Atomic knowledge claim — the canonical fact unit
+model KnowledgeFact {
+  id                 String            @id @default(cuid())
+  objectId           String
+  object             KnowledgeObject   @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  variantId          String?
+  variant            KnowledgeVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  claim              String
+  claimType          String            @default("OFFICIAL_FACT") // OFFICIAL_FACT, MEASURED_RESULT, TECHNICAL_ANALYSIS, VISUAL_OBSERVATION, USER_REPORT, OPINION, INFERENCE, UNKNOWN
+  verificationStatus String            @default("UNVERIFIED") // UNVERIFIED, VERIFIED, CONFLICTED, SUPERSEDED
+  lifecycleStatus    String            @default("ACTIVE") // ACTIVE, MERGED, DUPLICATE, ARCHIVED, INVALID
+  mergedInto         String?           // id of the surviving fact when MERGED/DUPLICATE
+  confidence         Float             @default(0.5)
+  observedAt         DateTime?
+  validFrom          DateTime?
+  validTo            DateTime?
+  version            Int               @default(1)
+  supersededBy       String?
+  lastVerifiedAt     DateTime?        // last time a refresh/gate re-verified this fact
+  evidence           KnowledgeFactEvidence[]
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  @@index([objectId, claimType])
+  @@index([variantId])
+  @@index([verificationStatus])
+  @@index([lifecycleStatus])
+  @@index([version])
+}
+
+// Knowledge self-repair lifecycle (D4): refresh plan fields live in a
+// dedicated FactRefreshState row so the KnowledgeFact table itself only
+// carries "what the knowledge is". recordedAt = KnowledgeFact.createdAt
+// (no separate column, R1). The refresh scheduler dispatches only rows
+// where archived = false (D3).
+model FactRefreshState {
+  id                      String    @id @default(cuid())
+  factId                  String    @unique
+  nextRefreshAt           DateTime
+  refreshIntervalMonths   Float     @default(1)
+  priority                Int       @default(3) // 1 CRITICAL | 2 HIGH | 3 NORMAL | 4 LOW
+  consecutiveFailureCount Int      @default(0) // D2: reset on any success
+  lastRefreshAt           DateTime?
+  lastRefreshStatus       String?  // one of the seven refresh outcomes
+  pausedUntil             DateTime? // D2: backoff window after max consecutive failures
+  unchangedStreak         Int       @default(0)
+  refreshCycle            String?  // "YYYY-MM"
+  archived                Boolean   @default(false) // lifecycle left ACTIVE -> stop dispatching
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  @@index([nextRefreshAt, archived])
+  @@index([refreshCycle])
+}
+
+// Write-once audit trail for fact lifecycle events (R6). Every FactWriter
+// transaction appends exactly one row; the table is never updated/deleted.
+model FactLifecycleHistory {
+  id            String   @id @default(cuid())
+  factId        String
+  eventType     String   // FIRST_RECORDED | VERIFIED | REFRESHED | MATERIAL_CHANGE | MINOR_CHANGE | CONFLICT_OPENED | CONFLICT_RESOLVED | SUPERSEDED | INSUFFICIENT_EVIDENCE | SOURCE_GONE | REPAIRED | REFRESH_FAILED
+  oldValue      String?
+  newValue      String?
+  changeType    String?  // seven-state refresh verdict
+  evidenceIds   String   // JSON array
+  sourceIds     String   // JSON array
+  researchJobId String?
+  refreshTaskId String?
+  refreshCycle  String?
+  createdAt     DateTime @default(now())
+  @@index([factId, createdAt])
+  @@index([eventType, createdAt])
+}
+
+// Accuracy Gate decision record (R5). One row per gate evaluation of one fact;
+// feeds the self-repair loop when verdict is not PASS.
+model AccuracyGateDecision {
+  id           String   @id @default(cuid())
+  factId       String
+  verdict      String   // PASS | NEEDS_VERIFICATION | CONFLICT | SUSPECTED_INACCURATE | OUTDATED
+  confidence   Float    @default(0.5)
+  evidence     String   // input summary JSON (which rule/field triggered the verdict)
+  repairTaskId String?
+  createdAt    DateTime @default(now())
+  @@index([factId, createdAt])
+  @@index([verdict, createdAt])
+}
+
+// ================================================================
+// Scenario-Driven Adaptive Model Routing — Model × Scenario evidence
+// ================================================================
+
+// One row per (model, scenario). Global capability knowledge, NOT global
+// model quality. Negative attribution updates only this row (R15 / CP2).
+model ModelScenarioCompatibility {
+  id                      String   @id @default(cuid())
+  modelId                String
+  scenarioId             String
+  compatibility          Float    @default(0.5)
+  confidence             Float    @default(0.1)
+  evidenceStrength       Float    @default(0) // derived: recomputed in every stats write
+  experimentCount        Int      @default(0)
+  uniqueUserCount        Int      @default(0)
+  userDistribution       String   @default("[]") // JSON: [{userIdHash, share}]
+  successCount           Int      @default(0)
+  correctionCount        Int      @default(0)
+  verificationCount      Int      @default(0)
+  fallbackCount          Int      @default(0)
+  recentPerformance      Float    @default(0.5) // rolling 7-day success rate
+  inherited              Boolean  @default(false)
+  inheritedFromScenarioId String? // parent-scenario matrix row used as prior
+  lastExperimentAt       DateTime?
+  poolVersion            String? // ModelPoolVersion.versionHash this row's prior was built against
+  semanticFit            String? // M1/M2 initial prior: high | medium | low | reject
+  status                 String   @default("experimental") // experimental | stable | reevaluating | deprecated
+  lastEvaluated          DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  @@unique([modelId, scenarioId])
+  @@index([scenarioId, compatibility])
+  @@index([status, evidenceStrength])
+  @@index([modelId])
+}
+
+// Per-model aggregate: in how many distinct scenarios this model reached
+// stable status (drives the scenario_diversity gate, R4.4).
+model ModelScenarioDiversity {
+  modelKey  String   @id
+  stableCount Int    @default(0)
+  updatedAt  DateTime @updatedAt
+}
+
+// Trackable pool version: hash of the runtime candidate model set + model
+// version/status/capabilities + provider health + key-pool availability.
+model ModelPoolVersion {
+  id          String   @id @default(cuid())
+  versionHash String   @unique
+  modelsJson  String   // snapshot: modelKey@version:status:capabilities + providerHealth + keyPool
+  triggerType String   // first_init | new_model | new_scenario | pool_change | drift | user_feedback
+  createdAt   DateTime @default(now())
+}
+
+// External source (URL, domain, quality)
+model EvidenceSource {
+  id           String   @id @default(cuid())
+  canonicalUrl String   @unique
+  domain       String
+  title        String?
+  sourceType   String   @default("WEB") // WEB, VIDEO, IMAGE, SOCIAL, FORUM, BENCHMARK, ACADEMIC, OFFICIAL, DOCUMENT
+  isOfficial   Boolean  @default(false)
+  publisher    String?
+  retrievedAt  DateTime @default(now())
+  qualityScore Float    @default(0.5)
+  region       String?
+  language     String?
+  evidence     Evidence[]
+  createdAt    DateTime @default(now())
+  @@index([domain])
+  @@index([sourceType])
+  @@index([isOfficial])
+}
+
+// A specific piece of evidence from a source
+model Evidence {
+  id                 String            @id @default(cuid())
+  sourceId           String
+  source             EvidenceSource    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  researchRecordId   String?
+  researchRecord     ResearchRecord?   @relation(fields: [researchRecordId], references: [id], onDelete: SetNull)
+  variantId          String?
+  variant            KnowledgeVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  content            String
+  evidenceType       String            @default("TEXT") // TEXT, IMAGE, VIDEO, MEASUREMENT, QUOTE, DATA
+  observedAt         DateTime?
+  metadataJson       String?
+  facts              KnowledgeFactEvidence[]
+  createdAt          DateTime          @default(now())
+  @@index([sourceId])
+  @@index([variantId])
+  @@index([researchRecordId])
+}
+
+// Junction: Fact ↔ Evidence
+model KnowledgeFactEvidence {
+  factId     String
+  fact       KnowledgeFact @relation(fields: [factId], references: [id], onDelete: Cascade)
+  evidenceId String
+  evidence   Evidence      @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  weight     Float @default(1.0)
+  createdAt  DateTime @default(now())
+  @@unique([factId, evidenceId])
+}
+
+// Research Record — the long-term record of how knowledge was formed
+model ResearchRecord {
+  id               String            @id @default(cuid())
+  objectId         String
+  object           KnowledgeObject   @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  variantId        String?
+  variant          KnowledgeVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  researchScope    String
+  researchPlanJson String
+  status           String            @default("COMPLETED") // PENDING, COMPLETED, FAILED
+  summary          String?
+  conflictsJson    String?
+  unknownsJson     String?
+  retrievedAt      DateTime          @default(now())
+  completedAt      DateTime?
+  evidence         Evidence[]
+  mediaRefs        MediaReference[]
+  createdAt        DateTime          @default(now())
+  @@index([objectId, status])
+  @@index([variantId])
+}
+
+// Image / Video reference
+model MediaReference {
+  id              String            @id @default(cuid())
+  objectId        String
+  object          KnowledgeObject   @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  researchRecordId String?
+  researchRecord  ResearchRecord?   @relation(fields: [researchRecordId], references: [id], onDelete: SetNull)
+  mediaType       String            @default("IMAGE") // IMAGE, VIDEO
+  sourceUrl       String
+  sourceTitle     String?
+  observationType String            @default("VISUAL_OBSERVATION")
+  observation     String?
+  measurementJson String?
+  timestampStart  Float?
+  timestampEnd    Float?
+  sourceAttribution String?
+  analysisResult  String?
+  createdAt       DateTime          @default(now())
+  @@index([objectId, mediaType])
+  @@index([researchRecordId])
+}
+
+// Relation between knowledge objects
+model KnowledgeRelation {
+  id         String          @id @default(cuid())
+  objectId   String
+  object     KnowledgeObject @relation("RelationFrom", fields: [objectId], references: [id], onDelete: Cascade)
+  targetId   String?
+  relationType String        @default("RELATED_TO") // RELATED_TO, COMPARED_WITH, PART_OF, AFFECTS, REPLACED_BY, SIMILAR_TO, DERIVED_FROM, CONTAINS
+  target     KnowledgeObject? @relation("RelationTo", fields: [targetId], references: [id], onDelete: SetNull)
+  description String?
+  lifecycleStatus String    @default("ACTIVE") // ACTIVE, DUPLICATE, ARCHIVED, INVALID
+  createdAt  DateTime        @default(now())
+  @@index([objectId])
+  @@index([targetId])
+  @@index([lifecycleStatus])
+}
+
+// Immutable Knowledge Organization Snapshot — write-once, never updated.
+// S123 always represents the knowledge base state at organization start.
+model OrganizationSnapshot {
+  id           String   @id @default(cuid())
+  scopeType    String   // object, variant, version, category, subtree
+  scopeId      String
+  dataJson     String?  // full snapshot content (small scopes: object/variant/version)
+  manifestJson String?  // entity manifest for large scopes: [{type,id,hash}]
+  hash         String   // SHA-256 integrity hash over captured content
+  createdAt    DateTime @default(now())
+  @@index([scopeType, scopeId])
+}
+
+// Organization history record — versioned and reversible
+model OrganizationRecord {
+  id                 String   @id @default(cuid())
+  jobId              String
+  scopeType          String   // object, variant, version, category, subtree
+  scopeId            String
+  objectId           String?  // optional convenience link (single-object scope)
+  beforeSnapshotRef  String
+  afterSnapshotRef   String
+  beforeSnapshotHash String
+  afterSnapshotHash  String
+  changesJson        String   // [{entityType, entityId, action, before, after, reason}]
+  issueTypes         String   // JSON array of issue types found
+  beforeVersion      Int
+  afterVersion       Int
+  appliedAt          DateTime @default(now())
+  @@index([scopeType, scopeId])
+  @@index([jobId])
+  @@index([objectId])
+}
