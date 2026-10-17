@@ -19,6 +19,84 @@ export interface ScenarioInput {
   status?: string;
 }
 
+// ================================================================
+// Atom policy parsing (todo 1)
+//
+// The Scenario model stores required_atoms / optional_atoms /
+// exclude_atoms as JSON-encoded strings whose column default is "".
+// `JSON.parse("")` throws, and the retrieval layer used to swallow that
+// inside a `.catch(() => [])` — silently yielding ZERO candidate atoms
+// for the whole request instead of degrading to the published set.
+// Every read of these columns now goes through parseAtomList().
+// ================================================================
+
+export interface ScenarioAtomPolicy {
+  required: string[];
+  optional: string[];
+  exclude: string[];
+  maxAtoms: number;
+}
+
+export const DEFAULT_MAX_ATOMS = 12;
+// R3 candidate cap for prompts (spec: prompts <= 20).
+export const ATOM_CANDIDATE_HARD_CAP = 20;
+
+function sanitizeAtomIds(values: unknown[]): string[] {
+  const out: string[] = [];
+  for (const v of values) {
+    if (typeof v !== 'string') continue;
+    const id = v.trim();
+    if (!id || out.includes(id)) continue;
+    out.push(id);
+  }
+  return out;
+}
+
+// Never throws. Accepts a real array, a JSON-encoded array, a bare id, or a
+// legacy comma-separated string; anything unusable yields [].
+//
+// A value that OPENS like JSON ([ { ") but fails to parse is treated as
+// corrupt and yields [] rather than being comma-split into garbage ids —
+// guessing here would silently invent phantom atom ids.
+export function parseAtomList(raw: unknown): string[] {
+  if (Array.isArray(raw)) return sanitizeAtomIds(raw);
+  if (typeof raw !== 'string') return [];
+  const text = raw.trim();
+  if (!text) return [];
+  const looksLikeJson = text[0] === '[' || text[0] === '{' || text[0] === '"';
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return sanitizeAtomIds(parsed);
+    if (typeof parsed === 'string') return sanitizeAtomIds([parsed]);
+    return [];
+  } catch {
+    // Corrupt JSON-ish value → fail closed. Otherwise treat as a legacy
+    // comma-separated list.
+    if (looksLikeJson) return [];
+    return sanitizeAtomIds(text.split(','));
+  }
+}
+
+// Builds the effective policy for a scenario row. `exclude` always wins: an
+// id listed in both exclude and required is dropped from both lists.
+export function getAtomPolicy(scenario: any): ScenarioAtomPolicy {
+  const rawMax = Number(scenario?.max_atoms);
+  const maxAtoms =
+    Number.isFinite(rawMax) && rawMax > 0
+      ? Math.min(Math.floor(rawMax), ATOM_CANDIDATE_HARD_CAP)
+      : DEFAULT_MAX_ATOMS;
+
+  const exclude = parseAtomList(scenario?.exclude_atoms);
+  const strip = (list: string[]) => list.filter((id) => !exclude.includes(id));
+
+  return {
+    required: strip(parseAtomList(scenario?.required_atoms)),
+    optional: strip(parseAtomList(scenario?.optional_atoms)),
+    exclude,
+    maxAtoms,
+  };
+}
+
 export const DEFAULT_SCENARIOS: ScenarioInput[] = [
   // Core (1-20)
   { id: 'general.chat', name: 'General Chat', category: 'core', required_atoms: ['core.identity'], optional_atoms: ['core.concise'], priority: 100 },
