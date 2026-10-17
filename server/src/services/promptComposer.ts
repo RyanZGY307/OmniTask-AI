@@ -36,8 +36,24 @@ const PRIORITY_GROUPS: Array<{ group: string; categories: string[]; header: stri
   { group: 'knowledge', categories: ['knowledge', 'research'], header: '[RETRIEVED KNOWLEDGE]' },
   { group: 'verification', categories: ['verification'], header: '[VERIFICATION]' },
   { group: 'agent', categories: ['agent', 'skill', 'tool'], header: '[AGENT / SKILLS]' },
+  // Safety net: content whose category is not in the taxonomy must NOT fall
+  // into 'system' (the highest-trust block). It is isolated here instead.
+  { group: 'unclassified', categories: [], header: '[UNCLASSIFIED INSTRUCTIONS]' },
   { group: 'output', categories: ['output', 'memory', 'user_style'], header: '[OUTPUT & USER STYLE]' },
 ];
+
+// Resolve an atom's category to a group. A MISSING/empty category means the
+// atom predates categorisation and is treated as core; an UNRECOGNISED
+// non-empty category is untrusted taxonomy drift and is quarantined in
+// 'unclassified' rather than being promoted into [SYSTEM INSTRUCTIONS].
+function resolveGroup(category: unknown): string {
+  const cat = typeof category === 'string' ? category.trim() : '';
+  if (!cat) return 'system';
+  for (const pg of PRIORITY_GROUPS) {
+    if (pg.categories.includes(cat)) return pg.group;
+  }
+  return 'unclassified';
+}
 
 export async function composePrompt(
   atomIds: string[],
@@ -54,22 +70,14 @@ export async function composePrompt(
   const selectedAtoms = atomIds.filter(id => versions[id]);
   const removedAtoms = atomIds.filter(id => !versions[id]);
 
-  // Group atoms by priority group
+  // Group atoms by priority group. Atoms are visited in the ORDER GIVEN so
+  // the resulting composition is deterministic for a fixed atomIds input.
   const groupContent = new Map<string, string[]>();
   for (const pg of PRIORITY_GROUPS) groupContent.set(pg.group, []);
 
   for (const id of selectedAtoms) {
     const atom = versions[id];
-    const category = ((atom as any).category || 'core') as string;
-    // Find which group this category belongs to
-    let targetGroup = 'system';
-    for (const pg of PRIORITY_GROUPS) {
-      if (pg.categories.includes(category)) {
-        targetGroup = pg.group;
-        break;
-      }
-    }
-    groupContent.get(targetGroup)!.push(atom.instruction);
+    groupContent.get(resolveGroup((atom as any).category))!.push(atom.instruction);
   }
 
   // Build sections in strict order
@@ -125,7 +133,7 @@ export async function composePrompt(
   // Assemble
   const allSections = sectionOrder.map(key => sections[key]).filter(Boolean);
   const finalPrompt = allSections.join('\n\n---\n\n');
-  const compositionHash = simpleHash(finalPrompt);
+  const compositionHash = simpleHash(canonicalizeForHash(finalPrompt));
 
   return {
     final_prompt: finalPrompt,
@@ -150,6 +158,16 @@ function formatRuntimeContext(ctx: Record<string, any>): string {
   if (ctx.files && ctx.files.length > 0) lines.push(`Files: ${ctx.files.join(', ')}`);
   lines.push(`Current Time: ${new Date().toISOString()}`);
   return lines.join('\n');
+}
+
+// The runtime context carries a wall-clock timestamp, which the model needs but
+// which would make composition_hash differ on every single request and defeat
+// its use as a persisted final_prompt_hash for trace correlation. Hash the
+// canonical (timestamp-stripped) form so the hash identifies the COMPOSITION.
+const VOLATILE_CONTEXT_LINE = /^Current Time: .*$/gm;
+
+export function canonicalizeForHash(prompt: string): string {
+  return prompt.replace(VOLATILE_CONTEXT_LINE, '');
 }
 
 function simpleHash(str: string): string {

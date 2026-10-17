@@ -96,6 +96,37 @@ function check(name: string, cond: boolean, extra = '') {
   check('same input → identical composition_hash', r.composition_hash === r2.composition_hash,
     `${r.composition_hash} vs ${r2.composition_hash}`);
 
+  console.log('\n5. composition_hash is stable across a time gap (timestamp-stripped)');
+  // Same runtime context on both calls so the ONLY variable is wall-clock time.
+  const rt = { language: 'zh', region: 'CN' };
+  const s1 = await composePrompt(Object.keys(versions), rt, { versions });
+  await new Promise(res => setTimeout(res, 1200));
+  const s2 = await composePrompt(Object.keys(versions), rt, { versions });
+  check('hash identical across >1s wall-clock gap', s1.composition_hash === s2.composition_hash,
+    `${s1.composition_hash} vs ${s2.composition_hash}`);
+  check('final_prompt still contains live timestamp',
+    /Current Time: \d{4}-\d{2}-\d{2}T/.test(s1.final_prompt));
+
+  console.log('\n6. unknown category is quarantined, never promoted to system');
+  const r4 = await composePrompt(
+    ['x_unknown'],
+    {},
+    { versions: { x_unknown: { version: '1.0.0', instruction: 'UNK_TEXT', category: 'weird_unknown_cat', priority: 1 } } },
+  );
+  check('unclassified section created', !!r4.sections.unclassified, JSON.stringify(Object.keys(r4.sections)));
+  check('unknown-cat atom routed to unclassified (not system)',
+    !!r4.sections.unclassified && r4.sections.unclassified.includes('UNK_TEXT'));
+  const sys4 = r4.sections.system || '';
+  check('UNK_TEXT not leaked into system group', !sys4.includes('UNK_TEXT'));
+
+  console.log('\n7. empty category falls back to core (legacy-safe)');
+  const r5 = await composePrompt(
+    ['x_legacy'],
+    {},
+    { versions: { x_legacy: { version: '1.0.0', instruction: 'LEGACY_CORE', category: '', priority: 5 } } },
+  );
+  check('empty category -> system group', !!r5.sections.system && r5.sections.system.includes('LEGACY_CORE'));
+
   console.log(`\n=== RESULT: ${pass} passed, ${fail} failed ===`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error('FATAL', e); process.exit(1); });
