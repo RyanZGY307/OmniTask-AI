@@ -71,3 +71,31 @@ ALTER TABLE "FlaggedConversation" ADD COLUMN IF NOT EXISTS "retentionUntil" TIME
 CREATE UNIQUE INDEX IF NOT EXISTS "FlaggedConversation_sourceMessageId_key" ON "FlaggedConversation"("sourceMessageId");
 CREATE INDEX IF NOT EXISTS "FlaggedConversation_retentionUntil_idx" ON "FlaggedConversation"("retentionUntil");
 
+
+-- File workspace (2026-10-18): turn chat output into readable/editable files.
+-- Idempotent: safe to re-run.
+CREATE TABLE IF NOT EXISTS "WorkspaceFile" (
+    "id" TEXT NOT NULL,
+    "conversationId" TEXT NOT NULL,
+    "messageId" TEXT,
+    "path" TEXT NOT NULL,
+    "content" TEXT NOT NULL,
+    "language" TEXT NOT NULL DEFAULT 'txt',
+    "source" TEXT NOT NULL DEFAULT 'extracted',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "WorkspaceFile_pkey" PRIMARY KEY ("id")
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "WorkspaceFile_conversationId_path_key" ON "WorkspaceFile"("conversationId", "path");
+CREATE INDEX IF NOT EXISTS "WorkspaceFile_conversationId_idx" ON "WorkspaceFile"("conversationId");
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'WorkspaceFile_conversationId_fkey') THEN
+    ALTER TABLE "WorkspaceFile" ADD CONSTRAINT "WorkspaceFile_conversationId_fkey"
+      FOREIGN KEY ("conversationId") REFERENCES "Conversation"("id")
+      ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
