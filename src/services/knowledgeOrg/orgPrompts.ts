@@ -121,7 +121,7 @@ Only include issues with confidence >= 0.7. If none, return { "issues": [] }.`;
 export function buildFinalValidatorPrompt(snapshotJson: string, changesJson: string): string {
   return `${ORG_MAIN_SYSTEM_PROMPT}
 
-You are the CortexAI Final Knowledge Base Organization Validator.
+You are the OmniTask Final Knowledge Base Organization Validator.
 Validate the proposed organization changes against the original snapshot.
 
 Original Knowledge Organization Snapshot:

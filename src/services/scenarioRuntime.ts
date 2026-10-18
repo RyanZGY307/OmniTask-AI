@@ -15,6 +15,7 @@ import { runP1, type ScenarioUnderstanding } from './scenarioWorkers/p1ScenarioA
 import { runP2, type P2Result } from './scenarioWorkers/p2ScenarioResolver';
 import { runP3, p3HardGate, p3ExploitExplore, type CandidateAtom } from './scenarioWorkers/p3PromptSelector';
 import { runP4 } from './scenarioWorkers/p4PromptGenerator';
+import { gradeSkills, type SkillGradeOutput } from './skillGrade';
 import { runS2, type S2CandidateSkill } from './scenarioWorkers/s2SkillJudge';
 import { runS4, type S4Output } from './scenarioWorkers/s4SkillSelection';
 import {
@@ -23,6 +24,14 @@ import {
   retrieveCandidateAtoms,
   retrieveCandidateSkills,
 } from './scenarioWorkers/scenarioRetrieval';
+
+/**
+ * S2 的逐 Skill 语义裁决（每个候选 Skill 一次 Agnes 调用）已按「严格零 AI」
+ * 退出技能选择链路，改由 skillGrade.ts 的确定性分级承担。S2 模块保留，仅在
+ * 需要 A/B 对比时以 CORTX_SKILL_AI_JUDGE=on 显式打开旧路径——打开后每个候选
+ * Skill 都会多一次模型调用，延迟与用量随之上升，因此默认关闭。
+ */
+const SKILL_AI_JUDGE = process.env.CORTX_SKILL_AI_JUDGE === 'on';
 
 export interface ScenarioRuntimeInput {
   userMessage: string;
@@ -91,10 +100,12 @@ export async function runScenarioRuntime(input: ScenarioRuntimeInput): Promise<S
     const atoms = atomCandidates;
     const skills = skillCandidates;
 
-    // Step 4: P3 (prompts) + S2 (skills) in parallel
-    const [p3, s2] = await Promise.all([
+    // Step 4: P3 (prompts) + skill grading (skills) in parallel.
+    // 技能侧是确定性分级（硬门 → A/B/C/D/EXCLUDED → 上限 2 → 第二技能互补收益
+    // 检查），零模型调用。
+    const [p3, skillGrades] = await Promise.all([
       runP3({ id: scenarioId ?? '', name: p1.domain, category: p1.domain }, atoms),
-      runS2({ id: scenarioId ?? '', name: p1.domain, category: p1.domain, signature: p1.scenario_signature }, skills),
+      gradeSkillsForScenario(p1, scenarioId, skills, input, scenarios),
     ]);
 
     // Step 5: P4 only when new scenario + no suitable prompt
@@ -121,8 +132,13 @@ export async function runScenarioRuntime(input: ScenarioRuntimeInput): Promise<S
     const { exploit } = p3ExploitExplore(gated, atoms);
     const selectedAtomIds = [...new Set([...exploit.map((c) => c.atom_id), ...finalAtoms.experimental_atom_ids])];
 
-    // Step 7: S4 final skill selection
-    const s4 = await runS4({ s2, scenario: { id: scenarioId ?? '', name: p1.domain, category: p1.domain }, user_tier: input.userTier });
+    // Step 7: S4 — 确定性终选（去重 / 置信度 / 可读 reason）；选择已在分级器完成
+    const s4 = await runS4({
+      graded: skillGrades,
+      scenario: { id: scenarioId ?? '', name: p1.domain, category: p1.domain },
+      user_tier: input.userTier,
+      experiment_constraints: p1.constraints,
+    });
 
     // Persist SelectionDecision
     await persistSelectionDecision({
@@ -131,7 +147,8 @@ export async function runScenarioRuntime(input: ScenarioRuntimeInput): Promise<S
       scenarioId,
       selectedAtomIds,
       selectedSkillIds: s4.selected_skill_ids,
-      source: p1.degraded || p2.degraded ? 'rule_fallback' : 'ai',
+      // 选择链路已零 AI（确定性分级），如实标注为 rule；降级时保留 rule_fallback
+      source: p1.degraded || p2.degraded ? 'rule_fallback' : 'rule',
       fallbackReason: p1.degraded ? 'p1_failed' : p2.degraded ? 'p2_failed' : undefined,
     });
 
@@ -241,6 +258,81 @@ async function persistP4Draft(p4: Awaited<ReturnType<typeof runP4>>, scenarioId:
       updated_at: new Date(),
     },
   }).catch(() => undefined);
+}
+
+/**
+ * 把链路上下文折叠成 skillGrade 的输入。场景声明的硬排除 Skill 与版本要求来自
+ * Step 2 已取回的场景行——零额外查询。
+ */
+async function gradeSkillsForScenario(
+  p1: ScenarioUnderstanding,
+  scenarioId: string | null,
+  skills: S2CandidateSkill[],
+  input: ScenarioRuntimeInput,
+  scenarios: any[],
+): Promise<SkillGradeOutput> {
+  const scenarioRow = scenarioId
+    ? scenarios.find((s) => s?.scenario?.id === scenarioId)?.scenario
+    : undefined;
+
+  const pool = SKILL_AI_JUDGE ? await filterByAiJudge(p1, scenarioId, skills) : skills;
+
+  return gradeSkills({
+    scenario: {
+      id: scenarioId ?? '',
+      name: p1.domain,
+      category: p1.domain,
+      signature: p1.scenario_signature,
+      exclude_skill_ids: parseIdList(scenarioRow?.exclude_skill_ids),
+      required_skill_version: scenarioRow?.required_skill_version
+        ? String(scenarioRow.required_skill_version)
+        : undefined,
+    },
+    skills: pool,
+    userTier: input.userTier,
+    taskType: (input.cachedIntent as any)?.taskType,
+    requiredCapabilities: [
+      p1.capability,
+      (input.cachedIntent as any)?.capabilityIntent,
+    ].filter(Boolean) as string[],
+    message: input.userMessage,
+    experimentConstraints: p1.constraints,
+  });
+}
+
+/**
+ * 可选 A/B 路径（CORTX_SKILL_AI_JUDGE=on）：让 S2 先做一次语义裁决，只借用它的
+ * "reject" 过滤候选，绝不采纳它的 "use/experimental" —— 选择权必须留在确定性
+ * 分级里，否则等于把选择重新交回模型。S2 整体失败时回退为纯规则候选集。
+ */
+async function filterByAiJudge(
+  p1: ScenarioUnderstanding,
+  scenarioId: string | null,
+  skills: S2CandidateSkill[],
+): Promise<S2CandidateSkill[]> {
+  try {
+    const s2 = await runS2(
+      { id: scenarioId ?? '', name: p1.domain, category: p1.domain, signature: p1.scenario_signature },
+      skills,
+    );
+    const rejected = new Set(
+      s2.decisions.filter((d) => d.decision === 'reject').map((d) => d.skill_id),
+    );
+    return skills.filter((s) => !rejected.has(s.skill.id));
+  } catch {
+    return skills;
+  }
+}
+
+/** 场景行的 id 列表字段：数组 / JSON 串 / 遗留逗号串都能读。 */
+function parseIdList(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+  } catch { /* 非 JSON 的遗留逗号串 */ }
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
 async function persistSelectionDecision(args: {

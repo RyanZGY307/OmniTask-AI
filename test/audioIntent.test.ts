@@ -13,7 +13,7 @@ const gate = (m: string, history?: any[]) => analyzeAudioGenerationIntent({ mess
 
 console.log('\n=== True generation requests (must open card) ===');
 check('朗读：xxx → open', gate('朗读：你好，欢迎来到 OmniTask。').shouldOpenAudioCard === true);
-check('朗读 auto-fills spokenText', gate('朗读：你好，欢迎来到 OmniTask。').autoFill?.spokenText === '你好，欢迎来到 CortexAI。');
+check('朗读 auto-fills spokenText', gate('朗读：你好，欢迎来到 OmniTask。').autoFill?.spokenText === '你好，欢迎来到 OmniTask。');
 check('用年轻温柔女声朗读 → open + voice + content', (() => {
   const r = gate('用年轻温柔女声朗读：今天是一个美好的开始。');
   return r.shouldOpenAudioCard === true && !!r.autoFill?.voiceDesign && r.autoFill?.spokenText === '今天是一个美好的开始。';
