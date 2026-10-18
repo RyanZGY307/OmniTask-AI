@@ -3,34 +3,41 @@
 // ================================================================
 
 import { getActiveVersions } from './promptRegistry';
+import type { ActiveVersionEntry } from './promptRegistry';
 
 export interface ConflictResult {
   conflicts: Array<{ atom: string; conflict_with: string; resolution: string }>;
   final_atoms: string[];
 }
 
-export async function resolveConflicts(atomIds: string[]): Promise<ConflictResult> {
-  const versions = await getActiveVersions();
+// `versions` is an optional pre-fetched snapshot from `getActiveVersions()`.
+// Passing it avoids a redundant DB query per request (todo 3): one query,
+// one snapshot, reuse across conflict + dependency resolution + composition.
+export async function resolveConflicts(
+  atomIds: string[],
+  versions?: Record<string, ActiveVersionEntry>,
+): Promise<ConflictResult> {
+  const vs = versions ?? (await getActiveVersions());
   const conflicts: Array<{ atom: string; conflict_with: string; resolution: string }> = [];
   const kept = new Set<string>();
   const priorityMap = new Map<string, number>();
 
   for (const id of atomIds) {
-    const atom = versions[id];
-    if (atom) priorityMap.set(id, (atom as any).priority || 50);
+    const atom = vs[id];
+    if (atom) priorityMap.set(id, atom.priority ?? 50);
   }
 
   for (let i = 0; i < atomIds.length; i++) {
     const id = atomIds[i];
-    const atom = versions[id];
+    const atom = vs[id];
     if (!atom) continue;
 
     let conflictFound = false;
-    for (const conflictId of (atom as any).conflicts_with || []) {
+    for (const conflictId of atom.conflicts_with ?? []) {
       if (kept.has(conflictId)) {
-        const conflictAtom = versions[conflictId];
+        const conflictAtom = vs[conflictId];
         const idPriority = priorityMap.get(id) || 50;
-        const conflictPriority = conflictAtom ? ((conflictAtom as any).priority || 50) : 50;
+        const conflictPriority = conflictAtom ? (conflictAtom.priority ?? 50) : 50;
 
         if (idPriority >= conflictPriority) {
           // New atom wins

@@ -41,6 +41,7 @@ import {
 } from './services/db';
 import { initDynamicConfig } from './services/configSync';
 import { seedDefaultScenarios } from './services/scenarioRegistry';
+import { seedDefaultPromptAtoms } from './services/promptRegistry';
 import { initializeModelLimits } from './services/billing/modelLimits';
 import { loadProviderConfigs } from './services/providerConfig';
 import { bootstrapInitialPricingVersion, runDailyPricingJob } from './services/finance/pricingEngine';
@@ -161,6 +162,11 @@ async function startup() {
   // Load dynamic configuration from DB (models, packs, pricing)
   initDynamicConfig().catch((err) =>
     console.warn('[BOOT] Dynamic config init warning:', err),
+  );
+  await seedDefaultPromptAtoms().then((ids) => {
+    if (ids.length > 0) console.log(`[BOOT] Seeded ${ids.length} default Prompt Atoms: ${ids.join(', ')}`);
+  }).catch((err) =>
+    console.warn('[BOOT] Prompt Atom seeding warning:', err),
   );
   seedDefaultScenarios().catch((err) =>
     console.warn('[BOOT] Scenario seeding warning:', err),

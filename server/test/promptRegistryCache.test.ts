@@ -21,7 +21,7 @@ let findManyCalls = 0;
 let mutationCalls = 0;
 
 const ROWS = [
-  { id: 'atom_task', category: 'task', priority: 5, versions: [{ version: '1.2.0', instruction: 'TASK INSTR' }] },
+  { id: 'atom_task', category: 'task', priority: 5, requires: '["atom_core"]', conflicts_with: '["atom_scenario"]', compatible_with: '["atom_core"]', parent: 'atom_core', extends: '["atom_core"]', tags: '["task","test"]', conditions: '{"language":"zh"}', versions: [{ version: '1.2.0', instruction: 'TASK INSTR' }] },
   { id: 'atom_core', category: 'core', priority: 9, versions: [{ version: '2.0.0', instruction: 'CORE INSTR' }] },
   { id: 'atom_scenario', category: 'scenario', priority: 3, versions: [{ version: '1.0.0', instruction: 'SCEN INSTR' }] },
   // published atom with no published version must be omitted, not defaulted
@@ -73,6 +73,30 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   check('published atom with no version is omitted', !('atom_no_version' in v1));
   check('every entry carries a category',
     Object.values(v1).every((a: any) => typeof a.category === 'string' && a.category.length > 0));
+
+  console.log('\n1b. dependency/conflict metadata is decoded (not left as raw strings)');
+  // Without this, resolveDependencies / resolveConflicts see `undefined` for
+  // requires / conflicts_with / parent / extends and become no-ops.
+  const t = v1.atom_task;
+  check('requires decoded from JSON string', JSON.stringify(t?.requires) === '["atom_core"]', JSON.stringify(t?.requires));
+  check('conflicts_with decoded', JSON.stringify(t?.conflicts_with) === '["atom_scenario"]');
+  check('compatible_with decoded', JSON.stringify(t?.compatible_with) === '["atom_core"]');
+  check('extends decoded', JSON.stringify(t?.extends) === '["atom_core"]');
+  check('parent preserved', t?.parent === 'atom_core', String(t?.parent));
+  check('tags decoded', JSON.stringify(t?.tags) === '["task","test"]');
+  check('conditions decoded to object', t?.conditions?.language === 'zh', JSON.stringify(t?.conditions));
+  check('atoms with no metadata get empty arrays, not undefined',
+    Array.isArray(v1.atom_core?.requires) && v1.atom_core?.requires.length === 0 &&
+    Array.isArray(v1.atom_core?.conflicts_with));
+
+  console.log('\n1c. parseMetadataList fails closed on malformed JSON');
+  check('empty string -> []', JSON.stringify(reg.parseMetadataList('')) === '[]');
+  check('null/undefined -> []', reg.parseMetadataList(null).length === 0 && reg.parseMetadataList(undefined).length === 0);
+  check('malformed JSON -> [] (no phantom ids)', JSON.stringify(reg.parseMetadataList('["a","b')) === '[]');
+  check('truncated object -> []', JSON.stringify(reg.parseMetadataList('{"oops')) === '[]');
+  check('real array passthrough + trim + dedupe',
+    JSON.stringify(reg.parseMetadataList([' a ', 'a', 'b', 1, null])) === '["a","b"]');
+  check('legacy comma string still parsed', JSON.stringify(reg.parseMetadataList('a, b ,c')) === '["a","b","c"]');
 
   console.log('\n2. TTL snapshot cache');
 
