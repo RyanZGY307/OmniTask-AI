@@ -99,12 +99,23 @@ export default function AdminFlaggedPage() {
                           <span>快照 · 上溯 {detail.flag.uploadedPairs} 对消息（共 {detail.messages.length} 条）</span>
                         </div>
                         <div className="max-h-96 overflow-y-auto p-3 space-y-2">
-                          {detail.messages.map((m: any, idx: number) => (
-                            <div key={idx} className={`rounded-lg px-3 py-2 text-xs ${m.role === 'user' ? 'bg-surface text-primary border border-border' : 'bg-bg/50 text-muted'}`}>
-                              <div className="text-[10px] text-muted mb-0.5">{m.role === 'user' ? '用户' : 'AI'}</div>
-                              <div className="whitespace-pre-wrap break-words line-clamp-6">{m.content}</div>
-                            </div>
-                          ))}
+                          {detail.messages.map((m: any, idx: number) => {
+                            const isUser = m.role === 'user';
+                            return (
+                              // 与主对话同一套规则：无头像、AI 输出无框、用户气泡反色、
+                              // 所有字与所在背景相反。这里底色不是页背景而是 bg-error/5，
+                              // --accent / --text-primary 在它之上对比度仍然足够。
+                              <div key={idx} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+                                {/* 标签在气泡之外、落在 bg-error/5 上，必须用 text-primary
+                                    反色；气泡内部的 chat-meta-user 只对 --accent 底成立，
+                                    直接搬过来在白底上会隐形。 */}
+                                <div className="text-[10px] chat-meta-model mb-0.5 px-1">{isUser ? '用户' : 'AI'}</div>
+                                <div className={`text-xs max-w-[88%] ${isUser ? 'chat-user-bubble' : 'chat-model-text'}`}>
+                                  <div className="whitespace-pre-wrap break-words line-clamp-6">{m.content}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
                           {detail.messages.length === 0 && <div className="text-xs text-muted text-center py-4">无快照内容</div>}
                         </div>
                       </div>
