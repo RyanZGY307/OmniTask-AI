@@ -3,6 +3,7 @@ import './globals.css';
 import { sans, display, mono } from '@/lib/fonts';
 import ConnectionGate from '@/components/ConnectionGate';
 import { I18nProvider } from '@/lib/i18n';
+import { apiOrigin } from '@/lib/standby';
 
 export const metadata: Metadata = {
   title: 'OmniTask',
@@ -37,11 +38,21 @@ const themeScript = `
 `;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // 待命连接：跨域部署（NEXT_PUBLIC_API_URL 为绝对地址）时提前建立到后端的
+  // DNS/TCP/TLS，首条真实请求不再付握手成本；同源部署（/api）无需 preconnect。
+  const standbyOrigin = apiOrigin();
+
   return (
     <html lang="en" className="light">
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <meta name="theme-color" content="#f8f9fc" />
+        {standbyOrigin ? (
+          <>
+            <link rel="preconnect" href={standbyOrigin} crossOrigin="anonymous" />
+            <link rel="dns-prefetch" href={standbyOrigin} />
+          </>
+        ) : null}
       </head>
       <body className={sans.className + ' font-body antialiased'}>
         <I18nProvider>

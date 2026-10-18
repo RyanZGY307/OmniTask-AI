@@ -41,7 +41,8 @@ import {
 } from './services/db';
 import { initDynamicConfig } from './services/configSync';
 import { seedDefaultScenarios } from './services/scenarioRegistry';
-import { seedDefaultPromptAtoms } from './services/promptRegistry';
+import { seedDefaultPromptAtoms, getActiveVersions } from './services/promptRegistry';
+import { activeClientCount, pruneClients, touchClient } from './services/clientPresence';
 import { initializeModelLimits } from './services/billing/modelLimits';
 import { loadProviderConfigs } from './services/providerConfig';
 import { bootstrapInitialPricingVersion, runDailyPricingJob } from './services/finance/pricingEngine';
@@ -81,6 +82,10 @@ app.get('/health', (_, res) => res.json({ status: 'ok', version: '4.0.0-memory-r
 // /api/health verifies both that the API is alive AND that all 4 PostgreSQL
 // datasources answer a ping within 5s. The frontend root layout polls this
 // and withholds the whole UI until it returns ok.
+//
+// 待命连接：带 X-Client-Id 的探测同时登记客户端存活，db.startKeepAlive 据此
+// 把 4 个池的保活从 60s 收紧到 15s；此处再预热提示词快照，让用户闲置几分钟后
+// 发出的第一条消息不必冷查全部已发布 atom。
 async function pingDb(client: any, timeoutMs = 5000): Promise<boolean> {
   try {
     await Promise.race([
@@ -91,12 +96,30 @@ async function pingDb(client: any, timeoutMs = 5000): Promise<boolean> {
   } catch { return false; }
 }
 
-app.get('/api/health', async (_req, res) => {
+app.get('/api/health', async (req, res) => {
+  // 前端可见标签页心跳带来的 per-tab id（见 client/src/hooks/useConnectionHealth.ts）。
+  // 登记后 db.startKeepAlive 会把 4 个池的保活从 60s 收紧到 15s：用户在手，
+  // 就不让池睡过去。无名探测（负载均衡/Render 探针）不产生存活记录。
+  const clientId = String(req.headers['x-client-id'] || '').trim();
+  if (clientId) touchClient(clientId);
+  pruneClients();
+
   const [userOk, convOk, knowOk, overOk] = await Promise.all([
     pingDb(prismaUser), pingDb(prismaConversation), pingDb(prismaKnowledge), pingDb(prismaOverflow),
   ]);
   const ok = userOk && convOk && knowOk && overOk;
-  res.status(ok ? 200 : 503).json({ ok, dbs: { user: userOk, conversation: convOk, knowledge: knowOk, overflow: overOk } });
+
+  // 待命：预热首条消息才会用到的提示词快照（TTL 缓存，最多每窗口一次查询）。
+  // 少了它，用户闲置几分钟后发出的第一条消息仍要冷查全部已发布 atom。
+  if (ok) {
+    try { await getActiveVersions(); } catch { /* 预热失败不影响健康判定 */ }
+  }
+
+  res.status(ok ? 200 : 503).json({
+    ok,
+    dbs: { user: userOk, conversation: convOk, knowledge: knowOk, overflow: overOk },
+    standby: { clients: activeClientCount() },
+  });
 });
 
 app.use('/api/auth', authRoutes);
