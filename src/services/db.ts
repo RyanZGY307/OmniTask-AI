@@ -177,38 +177,66 @@ export async function wakeDatabase(maxRetries = MAX_WAKE_RETRIES): Promise<boole
 // pooler warm so a user hitting the UI after a few idle minutes
 // does not stall on a cold reconnect. Call startKeepAlive() once
 // at boot; it no-ops on the unref'd timer when the process exits.
+//
+// Presence-driven cadence (待命连接): while a frontend tab is live the
+// backend tightens to KEEPALIVE_ACTIVE_MS (15s) so the first user message
+// never meets a sleeping pooler; with nobody watching it relaxes back to
+// the idle cadence, so an empty server does not burn queries. Live-ness is
+// reported by the frontend heartbeat (X-Client-Id on /api/health) and is
+// TTL-bounded — see clientPresence.ts.
+
+import { activeClientCount, KEEPALIVE_ACTIVE_MS, KEEPALIVE_IDLE_MS } from './clientPresence';
 
 let keepAliveTimer: NodeJS.Timeout | null = null;
+let keepAliveStopped = false;
 
-export function startKeepAlive(intervalMs = 60_000): void {
+function pingAllDatasources(): void {
+  for (const [name, client] of [
+    ['user', prismaUser],
+    ['conversation', prismaConversation],
+    ['knowledge', prismaKnowledge],
+    ['overflow', prismaOverflow],
+  ] as const) {
+    client
+      .$queryRaw`SELECT 1`
+      .then(() => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[DB:${name}] keep-alive OK`);
+        }
+      })
+      .catch((err: any) => {
+        console.warn(`[DB:${name}] keep-alive failed: ${err?.code || ''} ${err?.message || err}`);
+      });
+  }
+}
+
+export function startKeepAlive(
+  idleIntervalMs: number = KEEPALIVE_IDLE_MS,
+  activeIntervalMs: number = KEEPALIVE_ACTIVE_MS,
+): void {
   if (keepAliveTimer) return;
-  keepAliveTimer = setInterval(() => {
-    for (const [name, client] of [
-      ['user', prismaUser],
-      ['conversation', prismaConversation],
-      ['knowledge', prismaKnowledge],
-      ['overflow', prismaOverflow],
-    ] as const) {
-      client
-        .$queryRaw`SELECT 1`
-        .then(() => {
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`[DB:${name}] keep-alive OK`);
-          }
-        })
-        .catch((err: any) => {
-          console.warn(`[DB:${name}] keep-alive failed: ${err?.code || ''} ${err?.message || err}`);
-        });
-    }
-  }, intervalMs);
-  // Don't hold the process open on shutdown.
-  keepAliveTimer.unref?.();
-  console.log(`[DB] keep-alive armed (${Math.round(intervalMs / 1000)}s cadence, 4 datasources)`);
+  keepAliveStopped = false;
+
+  const loop = () => {
+    const liveClients = activeClientCount();
+    pingAllDatasources();
+    // Re-arm with the cadence this round earned, not a fixed one.
+    keepAliveTimer = setTimeout(() => {
+      keepAliveTimer = null;
+      if (!keepAliveStopped) loop();
+    }, liveClients > 0 ? activeIntervalMs : idleIntervalMs);
+    // Don't hold the process open on shutdown.
+    keepAliveTimer.unref?.();
+  };
+
+  loop();
+  console.log(`[DB] keep-alive armed (presence-driven: ${activeIntervalMs / 1000}s while a frontend is live, ${idleIntervalMs / 1000}s idle, 4 datasources)`);
 }
 
 export function stopKeepAlive(): void {
+  keepAliveStopped = true;
   if (keepAliveTimer) {
-    clearInterval(keepAliveTimer);
+    clearTimeout(keepAliveTimer);
     keepAliveTimer = null;
   }
 }
