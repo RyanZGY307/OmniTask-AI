@@ -1,6 +1,6 @@
 'use client';
 import { getApiUrl } from '@/lib/api';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import CodeBlock from './CodeBlock';
@@ -28,6 +28,44 @@ function hasMarkdownBlocks(content: string | undefined): boolean {
   return /(^|\n)[ \t]*(`{3,}|~{3,})[ \t]*\S/.test(String(content ?? ''));
 }
 
+/**
+ * 从围栏信息串里取模型声明的文件名（title=/filename=/path=/name=）。
+ * 与服务端 fileWorkspace.inferHint 用同一套语义；这里只用于显示。
+ * 拿不到就返回 undefined——组件不显示文件名，而不是猜一个。
+ * 绝对路径与穿越路径一律不展示：那不是给用户的文件名，是坏输入。
+ */
+function declaredFileName(infoString: string | undefined): string | undefined {
+  const raw = String(infoString ?? '').trim();
+  if (!raw) return undefined;
+  const m = /(?:title|filename|file\s*name|file|path|name)\s*=\s*["']?([^"'\s]+)["']?/i.exec(raw);
+  if (!m) return undefined;
+  const p = m[1];
+  if (p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.includes('..')) return undefined;
+  return p;
+}
+
+/**
+ * 按围栏出现顺序取出每个代码块声明的文件名。
+ * react-markdown 只会把 language 传进 className（language-ts），围栏上的
+ * title="src/a.ts" 不会变成 class，所以拿 node 是拿不到的；这里直接从原始
+ * 内容按顺序解析，再用 blockIndex 对齐到第几个代码块。
+ */
+function declaredNamesInOrder(content: string): Array<string | undefined> {
+  const out: Array<string | undefined> = [];
+  const lines = String(content ?? '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^[ \t]*(`{3,}|~{3,})[ \t]*(.*)$/.exec(lines[i]);
+    if (!open) continue;
+    out.push(declaredFileName(open[2]));
+    // 跳过到闭合围栏，避免把中间文本再误判成新围栏
+    const marker = open[1][0];
+    let j = i + 1;
+    while (j < lines.length && !new RegExp(`^[ \\t]*${marker}{3,}[ \\t]*$`).test(lines[j])) j++;
+    i = j;
+  }
+  return out;
+}
+
 interface Props {
   message: Message;
   isStreaming?: boolean;
@@ -53,6 +91,13 @@ export default function MessageBubble({
   const isOfficeConfirm = isMediaConfirm && message.metadata?.kind === 'office-gen';
   // 代码块序号：随每次渲染重新计数，给「下载本段」一个诚实的 snippet-N 名字。
   let codeBlockIndex = 0;
+  // 气泡取谁：用户文本消息 = 反色实底（chat-user-bubble）；模型输出 = 无框正文
+  // （chat-model-text）。media_confirm/image/video/audio/office 在服务端全是
+  // 助手侧产物，用户消息恒为 text；这道 isArtifact 护栏是给将来回归留的——
+  // 万一用户消息带了 artifact，退回中性容器，别让玻璃卡嵌进实心底里。
+  const isArtifact = isMediaConfirm || isImage || isVideo || isAudio || isOffice;
+  // 每个围栏声明的文件名，按出现顺序与 codeBlockIndex 对齐
+  const declaredNames = useMemo(() => declaredNamesInOrder(message.content), [message.content]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -97,22 +142,16 @@ export default function MessageBubble({
   return (
     <>
       <div
-        className={`${isStreaming ? '' : 'anim-fade-up'} flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}
+        className={`${isStreaming ? '' : 'anim-fade-up'} flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
         onContextMenu={handleContextMenu}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Avatar */}
-        <div
-          className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold ${
-            isUser ? 'bg-accent text-on-accent' : 'bg-surface-hover text-accent-figure'
-          }`}
-        >
-          {isUser ? 'U' : isResearch ? '🔬' : 'C'}
-        </div>
+        {/* 无头像：对话里不再放头像。谁在说话由对齐方向（模型在左、用户在右）
+            与底色（用户为反色实底）承担，去掉头像后靠这两条而非第三个标识。 */}
 
         {/* Content */}
-        <div className={`flex-1 max-w-[85%] ${isUser ? 'flex flex-col items-end' : ''}`}>
+        <div className={`max-w-[88%] ${isUser ? 'flex flex-col items-end' : ''}`}>
           {isMediaConfirm ? (
             // 音频规格卡与图片/视频卡同一 glass-card 体系，kind 区分渲染
             (message.metadata?.kind === 'audio-gen' || message.metadata?.kind === 'audio') ? (
@@ -124,9 +163,13 @@ export default function MessageBubble({
             )
           ) : (
           <div
-            className={`rounded-2xl px-4 py-3 ${
-              isUser ? 'bg-surface-hover border border-border text-primary' : 'glass-card-sm'
-            } ${isResearch ? 'border-accent/20' : ''} ${isTool ? 'border-warning/20' : ''}`}
+            className={
+              isUser
+                ? (isArtifact
+                    ? 'rounded-2xl px-4 py-3 bg-surface-hover border border-border text-primary'
+                    : 'chat-user-bubble')
+                : 'chat-model-text'
+            }
           >
             {/* Image */}
             {isImage && (
@@ -233,10 +276,10 @@ export default function MessageBubble({
               </div>
             )}
 
-            {/* Model badge */}
+            {/* Model name — 纯文字标签，模型输出里不再出现任何容器 */}
             {modelDisplayName && !isUser && (
-              <div className="mb-2">
-                <span className="text-[11px] px-2 py-0.5 rounded-capsule bg-surface text-muted border border-border">
+              <div className="mb-1.5">
+                <span className="chat-model-tag text-[11px] font-medium">
                   {isResearch ? '🔬 深度研究' : modelDisplayName}
                 </span>
               </div>
@@ -244,16 +287,18 @@ export default function MessageBubble({
 
             {/* Research badge */}
             {isResearch && !message.model && (
-              <div className="mb-2">
-                <span className="text-xs px-2 py-0.5 rounded-capsule bg-accent/10 text-accent border border-accent/20">
+              <div className="mb-1.5">
+                <span className="chat-model-tag text-[11px] font-medium">
                   🔬 深度研究报告
                 </span>
               </div>
             )}
 
-            {/* 中-高敏感警告条：第 1~3 次警告（随正常回复显示） */}
+            {/* 中-高敏感警告条：第 1~3 次警告（随正常回复显示）。
+                只用左侧指示线，不做方框——模型输出无"对话框"的原则同样适用于此，
+                但安全信息一条不减。 */}
             {safetyWarning > 0 && !isUser && (
-              <div className="mb-2 rounded-lg border border-warning/40 bg-warning/10 text-warning px-3 py-2 text-xs">
+              <div className="mb-2 chat-alert text-warning text-xs">
                 该内容涉及中-高敏感话题，这是第 {safetyWarning} 次警告
               </div>
             )}
@@ -272,6 +317,7 @@ export default function MessageBubble({
                         <CodeBlock
                           code={codeString}
                           language={match[1]}
+                          name={declaredNames[codeBlockIndex - 1]}
                           messageId={message.id}
                           blockIndex={codeBlockIndex}
                           onSaveToWorkspace={onSaveToWorkspace}
@@ -291,9 +337,10 @@ export default function MessageBubble({
               {isStreaming && <span className="typing-cursor" />}
             </div>
 
-            {/* 敏感标记红框：拒绝回答时显示于 AI 回复下方；文案由后端真实提交状态驱动 */}
+            {/* 敏感标记提示：拒绝回答时显示于 AI 回复下方；文案由后端真实提交状态驱动。
+                同 safetyWarning：保留语义色与全部信息，只把方框换成左侧指示线。 */}
             {safetyFlag && !isUser && !isStreaming && (
-              <div className="mt-2 rounded-card border-[1.5px] border-error px-3 py-2 text-xs text-error">
+              <div className="mt-2 chat-alert text-error text-xs">
                 {safetyFlag.uploadStatus === 'pending'
                   ? `对话已被标记，正在上传最近 ${safetyFlag.uploadedPairs} 条对话…`
                   : safetyFlag.uploadStatus === 'failed'
@@ -324,22 +371,22 @@ export default function MessageBubble({
             onClick={() => hasDetails && setShowDetails(v => !v)}
             role={hasDetails ? 'button' : undefined}
           >
-            <span className="text-[11px] num text-muted">
+            <span className={`text-[11px] num ${isUser ? 'chat-meta-user' : 'chat-meta-model'}`}>
               {new Date(message.createdAt).toLocaleTimeString('zh-CN', {
                 hour: '2-digit',
                 minute: '2-digit',
               })}
             </span>
             {!isUser && creditsCost > 0 && (
-              <span className="cost-indicator">-{Math.floor(creditsCost)} 积分</span>
+              <span className="text-[11px] num chat-meta-model">-{Math.floor(creditsCost)} 积分</span>
             )}
             {hasDetails && (
-              <span className="text-[11px] text-muted/60">{showDetails ? '收起' : '详情'}</span>
+              <span className="text-[11px] chat-meta-model">{showDetails ? '收起' : '详情'}</span>
             )}
           </div>
           {/* Expanded details: tokens & cost */}
           {!isUser && hasDetails && showDetails && (
-            <div className={`flex items-center gap-2 mt-0.5 text-[11px] num text-muted/70 ${isUser ? 'justify-end' : ''}`}>
+            <div className="flex items-center gap-2 mt-0.5 text-[11px] num chat-meta-model">
               {tokenCount > 0 && <span>{formatTokenCount(tokenCount)} tokens</span>}
               {creditsCost > 0 && <span>· 消耗 {Math.floor(creditsCost)} 积分</span>}
             </div>
