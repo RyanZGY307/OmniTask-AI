@@ -23,18 +23,24 @@ interface Message {
   createdAt: string;
 }
 
+/** 这条消息里至少有一个围栏代码块才显示"提取为文件"（空消息不显示）。 */
+function hasMarkdownBlocks(content: string | undefined): boolean {
+  return /(^|\n)[ \t]*(`{3,}|~{3,})[ \t]*\S/.test(String(content ?? ''));
+}
+
 interface Props {
   message: Message;
   isStreaming?: boolean;
   isLast?: boolean;
-  onDownloadCode?: (messageId: string) => void;
+  /** 把这条消息的代码块提取为文件工作台文件（需要 conversationId 才有意义） */
+  onSaveToWorkspace?: () => void;
   onCopy?: (content: string) => void;
   onEdit?: (content: string) => void;
   onRetry?: () => void;
 }
 
 export default function MessageBubble({
-  message, isStreaming, isLast, onDownloadCode, onCopy, onEdit, onRetry,
+  message, isStreaming, isLast, onSaveToWorkspace, onCopy, onEdit, onRetry,
 }: Props) {
   const isUser = message.role === 'user';
   const isImage = message.messageType === 'image' && message.metadata?.imageUrl;
@@ -45,7 +51,8 @@ export default function MessageBubble({
   const isTool = message.messageType === 'tool';
   const isMediaConfirm = message.messageType === 'media_confirm';
   const isOfficeConfirm = isMediaConfirm && message.metadata?.kind === 'office-gen';
-  const hasCode = message.metadata?.codeBlocks?.length > 0;
+  // 代码块序号：随每次渲染重新计数，给「下载本段」一个诚实的 snippet-N 名字。
+  let codeBlockIndex = 0;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -260,13 +267,14 @@ export default function MessageBubble({
                     const match = /language-(\w+)/.exec(className || '');
                     const codeString = String(children).replace(/\n$/, '');
                     if (!inline && match) {
+                      codeBlockIndex++;
                       return (
                         <CodeBlock
                           code={codeString}
                           language={match[1]}
                           messageId={message.id}
-                          onDownloadCode={onDownloadCode}
-                          multiFile={hasCode && message.metadata.codeBlocks.length > 1}
+                          blockIndex={codeBlockIndex}
+                          onSaveToWorkspace={onSaveToWorkspace}
                         />
                       );
                     }
@@ -294,24 +302,17 @@ export default function MessageBubble({
               </div>
             )}
 
-            {/* Code blocks download */}
-            {hasCode && !isStreaming && (
-              <div className="mt-3 flex gap-2">
-                {message.metadata.codeBlocks.length === 1 ? (
-                  <button onClick={() => onDownloadCode?.(message.id)} className="file-download-btn">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    {message.metadata.codeBlocks[0].name}
-                  </button>
-                ) : (
-                  <button onClick={() => onDownloadCode?.(message.id)} className="file-download-btn">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    下载 ZIP ({message.metadata.codeBlocks.length}个文件)
-                  </button>
-                )}
+            {/* 文件能力入口：把这条消息的代码块提取为真实文件。
+                旧实现依赖 message.metadata.codeBlocks（服务端从不写该字段），
+                这段按钮从未渲染过；并且旧端点只返回整条消息的 .txt。 */}
+            {!isUser && !isStreaming && onSaveToWorkspace && hasMarkdownBlocks(message.content) && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button onClick={onSaveToWorkspace} className="file-download-btn">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-7l-2-2H5a2 2 0 00-2 2z" />
+                  </svg>
+                  提取为文件
+                </button>
               </div>
             )}
           </div>

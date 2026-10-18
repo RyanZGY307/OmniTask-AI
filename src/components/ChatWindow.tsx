@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
+import FileWorkspace from './FileWorkspace';
 import { useChatStore } from '@/store/chatStore';
 import { useAuthStore } from '@/store/authStore';
 import { getEffectiveTier, formatCredits, getModelDisplayName } from '@/lib/models';
@@ -47,6 +48,14 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pinnedToBottomRef = useRef(true);
   const [editContent, setEditContent] = useState<string | null>(null);
+  // 文件工作台：面板开关 + 待提取的消息（提取动作由 FileWorkspace 真正执行）
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [extractTarget, setExtractTarget] = useState<{ messageId: string } | null>(null);
+
+  const onSaveMessageToWorkspace = (messageId: string) => {
+    setExtractTarget({ messageId });
+    setWorkspaceOpen(true);
+  };
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -148,6 +157,7 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
         tier={tier}
         creditBalance={user?.creditBalance ?? creditBalance}
         conversationId={conversationId}
+        onOpenWorkspace={() => setWorkspaceOpen(true)}
       />
 
       {searchOpen && conversationId && (
@@ -258,7 +268,7 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
                     <MessageBubble
                       message={msg}
                       isLast={i === currentMessages.length - 1 && !isStreaming}
-                      onDownloadCode={store.downloadCode}
+                      onSaveToWorkspace={() => onSaveMessageToWorkspace(msg.id)}
                       onCopy={(c) => { navigator.clipboard.writeText(c); store.showToast('已复制'); }}
                       onEdit={(c) => setEditContent(c)}
                       onRetry={() => conversationId && store.retryMessage(conversationId)}
@@ -322,6 +332,22 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
           <Toast message={toastMessage} onDismiss={store.clearError} canBuyCredits={isProTier} />
         </div>
       )}
+
+      {/* 文件工作台抽屉：创建/读取/修改/多文件/目录/ZIP 下载 */}
+      {workspaceOpen && (
+        <div className="absolute inset-0 z-40 flex justify-end">
+          <div className="absolute inset-0 bg-black/25" onClick={() => setWorkspaceOpen(false)} />
+          <div className="relative h-full">
+            <FileWorkspace
+              conversationId={conversationId}
+              open={workspaceOpen}
+              onClose={() => setWorkspaceOpen(false)}
+              extractTarget={extractTarget}
+              onToast={(m) => store.showToast(m)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -362,6 +388,7 @@ function CapsuleBar({
   onOpenModelSelector, onOpenSidebar, onOpenSearch,
   thinkLabel, tier, creditBalance,
   conversationId,
+  onOpenWorkspace,
 }: {
   modelLabel: string;
   onOpenModelSelector: () => void;
@@ -371,6 +398,7 @@ function CapsuleBar({
   tier: string;
   creditBalance: number;
   conversationId: string | null;
+  onOpenWorkspace?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -423,6 +451,7 @@ function CapsuleBar({
       { icon: <ShareIcon />, label: tr('chat.share'), onClick: handleShare },
       { icon: <PinIcon />, label: isPinned ? tr('chat.unpin') : tr('chat.pin'), onClick: handlePin },
       { icon: <FolderPlusIcon />, label: tr('chat.addToProject'), onClick: () => handleComingSoon(tr('chat.addToProject')) },
+      { icon: <FileWorkspaceIcon />, label: '文件工作台', onClick: () => { onOpenWorkspace?.(); setMenuOpen(false); } },
       { icon: <SearchIcon />, label: tr('chat.findInChat'), onClick: () => { onOpenSearch(); setMenuOpen(false); } },
       { icon: <TrashIcon />, label: tr('chat.delete'), danger: true, onClick: handleDelete },
     );
@@ -577,6 +606,16 @@ function PinIcon() {
     </svg>
   );
 }
+// ==================== 文件工作台图标 ====================
+function FileWorkspaceIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+      <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+      <path d="M3 11h18" />
+    </svg>
+  );
+}
+
 function FolderPlusIcon() {
   return (
     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
