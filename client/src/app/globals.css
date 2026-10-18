@@ -19,7 +19,7 @@
   --accent-rgb: 10, 10, 12;
   /* 点缀色（图标/指示线/装饰图形）：浅色模式用黑 */
   --accent-figure: #0a0a0c;
-  /* accent 填充面之上的文字色（如 C 头像、主按钮）：浅色模式白字 */
+  /* accent 填充面之上的文字色（用户气泡、主按钮）：浅色模式白字 */
   --on-accent: #ffffff;
   --text-primary: #0a0a0c;
   --text-muted: #4b5563;
@@ -512,6 +512,78 @@
 }
 @keyframes caretBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
+/* ================================================================
+   对话气泡体系（2026-10-18 改版）
+   三条硬规则，对应产品要求：
+   1. 对话框旁边不放头像——谁在说话由"对齐方向 + 底色"承担，不再靠头像。
+   2. 模型的输出没有"对话框"——正文直接落在页背景上，没有卡片、没有边框、
+      没有阴影；只有代码块、音频/Office 这类一等 Artifact 保留自己的容器。
+   3. 用户气泡是背景的反色（--accent），字是那块底的反色（--on-accent）；
+      模型正文用 --text-primary（背景的反色）。深浅两套主题下对比度都 ≥ 17:1。
+   ================================================================ */
+
+/* 用户气泡：实心反色底 + 反色字。无边框、无阴影——底色本身已足够区分。 */
+.chat-user-bubble {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: 16px;
+  padding: 12px 16px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* 模型输出：没有对话框。不设背景/边框/圆角/内边距，正文直接贴页背景。 */
+.chat-model-text {
+  background: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
+  color: var(--text-primary);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* 气泡内次级信息（时间/模型名/详情）：同一反色家族，用透明度降级，
+   不引入第二套色相——"所有字与背景相反"要求的是同色相反，不是另选一个颜色。 */
+.chat-meta-user { color: var(--on-accent); opacity: 0.72; }
+.chat-meta-model { color: var(--text-primary); opacity: 0.72; }
+
+/* 系统类提示（安全警告/标记）沿用同一条"无框"原则：
+   保留语义色与信息，但只用左侧指示线，不再做成方框。 */
+.chat-alert {
+  border-left: 3px solid currentColor;
+  padding-left: 10px;
+  background: none;
+  border-radius: 0;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+}
+
+/* 用户气泡里的链接：底色已经是 --accent，markdown 的链接也取 --accent，
+   同一颜色会让链接彻底隐形。气泡内链接一律改用 --on-accent（底的反色）。 */
+.chat-user-bubble a {
+  color: var(--on-accent);
+  text-decoration-color: rgba(255, 255, 255, 0.6);
+}
+.dark .chat-user-bubble a { text-decoration-color: rgba(0, 0, 0, 0.55); }
+
+/* 用户气泡里的行内代码沿用 markdown 自己的深底浅字，在实心底上仍可读，
+   这里只负责不让 markdown 规则把它也染成 accent 色。 */
+.chat-user-bubble .markdown-content code { background: var(--code-bg); color: #e4e6ef; }
+
+/* 模型名/深度研究标签：从"胶囊框"改成纯文字，模型输出不再出现任何容器 */
+.chat-model-tag {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
+  color: var(--text-primary);
+  opacity: 0.72;
+}
+
 .file-download-btn {
   display: inline-flex;
   align-items: center;
@@ -530,15 +602,6 @@
 }
 .file-download-btn:hover { border-color: var(--accent-dim); }
 .file-download-btn:active { transform: scale(0.97); }
-
-.cost-indicator {
-  font-size: var(--fs-caption);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  padding: 1px 6px;
-  border-radius: 9999px;
-  border: 1px solid var(--card-border);
-}
 
 .credit-pill {
   font-size: var(--fs-caption);

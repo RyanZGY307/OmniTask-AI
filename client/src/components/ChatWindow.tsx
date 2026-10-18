@@ -300,11 +300,10 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
                 )}
 
                 {isStreaming && !streamingContent && !researchProgress && (
-                  <div className="flex gap-3 anim-fade-up">
-                    <div className="w-8 h-8 rounded-lg bg-surface-hover text-accent-figure flex items-center justify-center text-sm font-bold">C</div>
-                    <div className="liquid-glass px-4 py-3">
+                  <div className="flex flex-col items-start anim-fade-up">
+                    <div className="chat-model-text">
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xs text-muted anim-pulse-soft">{currentModelName || 'AI 正在思考'}</span>
+                        <span className="text-xs chat-meta-model anim-pulse-soft">{currentModelName || 'AI 正在思考'}</span>
                         <div className="flex gap-1">
                           <div className="w-1.5 h-1.5 bg-accent rounded-full anim-bounce" style={{ animationDelay: '0ms' }} />
                           <div className="w-1.5 h-1.5 bg-accent rounded-full anim-bounce" style={{ animationDelay: '150ms' }} />

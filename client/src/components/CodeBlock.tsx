@@ -7,6 +7,8 @@ import { downloadSnippet } from '@/lib/fileWorkspace';
 interface Props {
   code: string;
   language: string;
+  /** 围栏里声明的文件名（title="src/a.ts"）；有就显示，没有就不显示——不猜 */
+  name?: string;
   messageId?: string;
   /** 存入文件工作台（服务端提取，真实文件名） */
   onSaveToWorkspace?: () => void;
@@ -14,7 +16,7 @@ interface Props {
   blockIndex?: number;
 }
 
-export default function CodeBlock({ code, language, messageId, onSaveToWorkspace, blockIndex = 1 }: Props) {
+export default function CodeBlock({ code, language, name, messageId, onSaveToWorkspace, blockIndex = 1 }: Props) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   // 超过 20 行的代码块默认折叠，减少首屏信息压力（P2）
@@ -30,7 +32,10 @@ export default function CodeBlock({ code, language, messageId, onSaveToWorkspace
   return (
     <div className="code-block-wrapper">
       <div className="code-block-header">
-        <span>{language}</span>
+        <span className="flex items-center gap-2 min-w-0">
+          <span>{language}</span>
+          {name && <span className="truncate font-mono opacity-80">{name}</span>}
+        </span>
         <div className="flex gap-2">
           <button onClick={handleCopy} className="flex items-center gap-1 px-2 py-1 rounded hover:bg-surface-light text-xs transition-colors anim-press">
             {copied ? <><svg className="w-3.5 h-3.5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>已复制</> : <><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 012 2v8a2 2 0 002 2z" /></svg>复制</>}
