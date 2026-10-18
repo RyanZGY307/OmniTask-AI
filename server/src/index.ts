@@ -24,6 +24,7 @@ import userProfileRoutes from './routes/userProfile';  // NEW
 import connectionsRoutes from './routes/connections';
 import providersRoutes from './routes/providers';
 import actionsRoutes from './routes/actions';
+import workspaceRoutes from './routes/workspace';  // 文件工作台（创建/读取/修改/目录/ZIP 下载）
 import { devicesRouter, tasksRouter, browserRouter } from './routes/devices';
 import modelsRoutes from './routes/models';
 import { errorHandler } from './middleware/errorHandler';
@@ -142,6 +143,7 @@ app.use('/api/connections', connectionsRoutes);
 app.use('/api/providers', providersRoutes);
 app.use('/api/chat/audio', audioRoutes);  // Audio generation (TTS)
 app.use('/api/actions', actionsRoutes);
+app.use('/api/workspace', workspaceRoutes);  // 文件工作台：对话产物的真实文件能力
 app.use('/api/devices', devicesRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/browser', browserRouter);

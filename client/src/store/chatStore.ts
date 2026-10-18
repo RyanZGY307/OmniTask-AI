@@ -106,7 +106,6 @@ interface ChatState {
     sendMessage: (conversationId: string, content: string, mode: string, model: string, signal?: AbortSignal) => Promise<void>;
     stopGeneration: () => void;
     startDeepResearch: (conversationId: string, topic: string) => Promise<void>;
-    downloadCode: (messageId: string) => Promise<void>;
     retryMessage: (conversationId: string) => Promise<void>;
     confirmMedia: (confirmMessageId: string, params: Record<string, any>) => Promise<any>;
     confirmAudio: (confirmMessageId: string, params: Record<string, any>) => Promise<any>;
@@ -287,19 +286,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
     } catch (err: any) { set({ error: err.message || '深度研究失败' }); } finally { set({ isStreaming: false, streamingContent: '', researchProgress: null }); }
-  },
-
-  downloadCode: async (messageId: string) => {
-    try {
-      const token = localStorage.getItem('cortex_token');
-      const res = await fetch(`${API_URL}/chat/download-code`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ messageId }) });
-      if (!res.ok) throw new Error('下载失败');
-      const blob = await res.blob();
-      const disposition = res.headers.get('content-disposition') || '';
-      const filename = disposition.match(/filename="?(.+?)"?$/)?.[1] || 'code.zip';
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
-    } catch (err: any) { set({ toastMessage: err.message || '下载失败' }); }
   },
 
   retryMessage: async (conversationId: string) => { try { await apiPost(`/chat/conversations/${conversationId}/retry`, {}); get().fetchMessages(conversationId); } catch {} },

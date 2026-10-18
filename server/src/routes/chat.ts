@@ -1157,23 +1157,6 @@ router.post('/deep-research', authMiddleware, async (req: AuthRequest, res: Resp
   });
 });
 
-router.post('/download-code', authMiddleware, async (req: AuthRequest, res: Response) => {
-  try {
-    const { messageId } = req.body;
-    if (!messageId) return res.status(400).json({ error: '缺少 messageId' });
-    const message = await prismaConversation.message.findFirst({
-      where: { id: messageId, conversation: { userId: req.user!.id } },
-    });
-    if (!message) return res.status(404).json({ error: '消息不存在' });
-    const content = message.content || '';
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="response-${messageId}.txt"`);
-    res.send(content);
-  } catch {
-    res.status(500).json({ error: '下载失败' });
-  }
-});
-
 // ================================================================
 // GET /:id — get conversation with messages
 // ================================================================
