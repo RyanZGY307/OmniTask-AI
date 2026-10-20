@@ -42,7 +42,7 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
   const {
     currentMessages, isLoadingMessages, isStreaming, streamingContent,
     currentMode, currentModel, modelSwitchNotice, creditBalance, toastMessage,
-    researchProgress, queueStatus,
+    researchProgress, queueStatus, contextCompression,
   } = store;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -214,6 +214,22 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
         <div className="px-4 py-2 bg-warning/10 border-b border-warning/20 text-warning text-xs flex items-center justify-between anim-slide-down mt-14">
           <span>{modelSwitchNotice}</span>
           <button onClick={store.clearModelSwitch} className="text-warning hover:text-warning/70 anim-press">✕</button>
+        </div>
+      )}
+
+      {/* ===== 上下文压缩提示 =====
+          只在服务端报告真实压缩任务时出现（绑定 taskId），不伪造状态。
+          文案一律用服务端下发的 contextCompression.text —— 前端不定义、
+          不改写、不补充说明，保证 Chat 与 Agent 两侧表述一致。
+          黑白极简：不用彩色语义色，压缩是中性过程而非警告/成功。 */}
+      {contextCompression && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="px-4 py-2 bg-foreground/5 border-b border-foreground/10 text-muted text-xs flex items-center gap-2 anim-slide-down mt-14"
+        >
+          <span className="w-3 h-3 border border-foreground/40 border-t-transparent rounded-full anim-spin shrink-0" aria-hidden="true" />
+          <span>{contextCompression.text}</span>
         </div>
       )}
 

@@ -76,6 +76,12 @@ interface QueueStatus {
   estimatedWaitSeconds: number;
 }
 
+/** 上下文压缩状态：文案一律用服务端下发的固定表述，前端不二次定义 */
+interface ContextCompressionState {
+  text: string;
+  taskId?: string | null;
+}
+
 interface ChatState {
   conversations: Conversation[];
   currentMessages: Message[];
@@ -90,6 +96,7 @@ interface ChatState {
   toastMessage: string | null;
   error: string | null;
   queueStatus: QueueStatus | null;
+  contextCompression: ContextCompressionState | null;
   researchProgress: ResearchProgress | null;
   autoModelPool: Record<string, boolean>;
   modeModelPreferences: Record<string, string>;
@@ -142,6 +149,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   toastMessage: null,
   error: null,
   queueStatus: null,
+  contextCompression: null,
   researchProgress: null,
   autoModelPool: {},
   modeModelPreferences: {},
@@ -206,7 +214,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           if (!line.startsWith('data: ')) continue;
           try {
             const parsed = JSON.parse(line.slice(6));
-            if (parsed.type === 'chunk' && parsed.content) {
+            if (parsed.type === 'context_compression') {
+              // 压缩进行中：只显示服务端固定文案，不改写消息流。
+              // 压缩在后台跑，本轮对话照常继续（任务书第十章：不得无故中断
+              // 已成功提交的模型推理）。
+              const text = typeof parsed.text === 'string' && parsed.text ? parsed.text : '正在压缩上下文，可继续对话';
+              set({ contextCompression: { text, taskId: parsed.taskId ?? null } });
+            }
+            else if (parsed.type === 'context_compression_done') {
+              set({ contextCompression: null });
+            }
+            else if (parsed.type === 'chunk' && parsed.content) {
               set({ streamingContent: get().streamingContent + parsed.content, queueStatus: null });
             }
             else if (parsed.type === 'queue') {
@@ -247,6 +265,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (ctrl.signal.aborted || err?.name === 'AbortError') { set({ streamingContent: '' }); return; }
       set({ error: err.message || '发送失败' });
     } finally {
+      // 发送结束清除压缩提示：它只表示"当前后台任务在跑"，不属于消息流
+      set({ contextCompression: null });
       signal?.removeEventListener('abort', onExternalAbort);
       activeStreamAbort = null;
       set({ isStreaming: false, streamingContent: '', queueStatus: null });
