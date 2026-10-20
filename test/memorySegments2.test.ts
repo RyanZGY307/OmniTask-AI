@@ -204,6 +204,29 @@ function decideLocally(st: FakeState, cfg: ReturnType<typeof resolveStorageConfi
     check('删除受 triggerReason === storage 限制', /triggerReason === 'storage'/.test(clean));
   }
 
+  S('11. 删除数量超过冻结范围 = 数据安全事件，必须置 FAILED');
+  {
+    // 修复的缺陷：原先只 console.warn('delete partial')，deleted > rowsInRange
+    //（删除了范围外的消息）也只是一条日志，任务照样 COMPLETED。
+    // 删除不可逆，删多了必须显式失败并留诊断。
+    const { readFileSync } = require('fs');
+    const src = readFileSync('src/services/memoryManager/index.ts', 'utf-8');
+    const clean = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    check('存在 deleted > rowsInRange 的显式分支', /deleted > rowsInRange/.test(clean));
+    check('删多时置 FAILED 而非仅记录', (() => {
+      const i = clean.indexOf('deleted > rowsInRange');
+      const seg = clean.slice(i, i + 700);
+      return seg.includes("status: 'FAILED'") && seg.includes('OVER-DELETE');
+    })());
+    check('删多时立刻 return 不再继续删', (() => {
+      const i = clean.indexOf('deleted > rowsInRange');
+      return clean.slice(i, i + 700).includes('return {');
+    })());
+    check('删少仍保留 warn 留痕', /deleted < rowsInRange/.test(clean));
+    check('历史压缩分隔标记写入（避免前端对话无声断裂）', /compressed_history/.test(clean));
+    check('分隔标记不用气泡（前端按 messageType 单独渲染）', /messageType: 'compressed_history'/.test(clean));
+  }
+
   console.log(`\n删除边界测试：${pass} 通过 / ${fail} 失败`);
   process.exitCode = fail > 0 ? 1 : 0;
 })().catch((e) => { console.error('测试崩溃:', e); process.exit(1); });
