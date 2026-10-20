@@ -28,7 +28,7 @@ import { chatWithFallback } from '../models';
 import { getDynamicModels } from '../configSync';
 import { MODEL_REGISTRY } from '../../config';
 import { computeInputBudget, computeCompressionCallBudget, estimateTokens, resolveModelCapacity, resolveBudgetConfig, type ContextPart } from './tokens';
-import { planSegments, planMergeGroups, assignLayers, type SegmentableMessage, type MemoryLayer } from './segments';
+import { planSegments, planMergeGroups, assignLayers, splitOversizedMessage, type SegmentableMessage, type MemoryLayer, type OversizedChunk } from './segments';
 
 // ---- 可配置参数（默认值见任务书 3.1：30 / 50 / 20） ----
 
@@ -561,7 +561,26 @@ export async function runCompressionTask(taskId: string): Promise<RunTaskResult>
     await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { status: 'RUNNING', startedAt: new Date() } });
     const plan = planSegments(segMessages, callBudget.segmentInputBudget);
 
-    // 复用已验证的中间结果（任务书 5.10）：范围与模型一致才复用
+    // ===== 单条消息本身超预算时的结构化分块（任务书 5.11）=====
+    // 修复的真实缺陷：planSegments 会把超长单条消息放入 oversizedMessages 并
+    // 跳过它，而这里原先**从未消费该字段** —— 结果是这条消息既不进入任何
+    // 分段（内容从未被摘要覆盖），又会在 storage 压缩时被
+    // deleteMany({seq 范围}) 按范围删掉，造成静默且不可逆的数据丢失。
+    // 现在按内容结构切块，并把每个块作为带溯源的独立分段送入压缩，
+    // 使内容真正进入最终摘要。原文同时保留（不入删除范围的前提见下方校验）。
+    const oversizedChunks: OversizedChunk[] = [];
+    for (const big of plan.oversizedMessages) {
+      oversizedChunks.push(...splitOversizedMessage(
+        { seq: big.seq, content: big.content },
+        callBudget.segmentInputBudget,
+      ));
+    }
+    // 覆盖校验用：所有分段+分块实际覆盖的原始 seq 集合
+    const coveredSeqs = new Set<number>();
+    for (const seg of plan.segments) {
+      for (const m of seg.messages) coveredSeqs.add(m.seq);
+    }
+    for (const ch of oversizedChunks) coveredSeqs.add(ch.sourceSeq);
     const reusable = await loadReusableSegments(taskId, modelKey, plan.segments);
     let completed = 0;
     let inputTokens = 0;
@@ -597,6 +616,48 @@ export async function runCompressionTask(taskId: string): Promise<RunTaskResult>
         data: { segmentsDone: completed, segmentCount: plan.segments.length, inputTokens, outputTokens },
       });
     }
+
+    // ===== 压缩超长单条消息的结构化分块（任务书 5.11）=====
+    // 分块是**独立分段**：每个块带原始消息 seq、块序号、块总数与来源定位，
+    // 因此合并时能正确重组，且不会把局部块误当成完整历史。
+    // 分块从 segmentIndex 1000 起编号，避免与常规分段索引冲突（唯一索引在
+    // (taskId, segmentIndex) 上）。
+    for (const [ci, ch] of oversizedChunks.entries()) {
+      // 复用校验：同一原始消息 + 同一块序号 + 同一模型已成功过才复用
+      const reuse = await prismaConversation.compressionSegment.findFirst({
+        where: {
+          taskId, status: 'DONE', modelId: modelKey,
+          sourceStartSeq: ch.sourceSeq, sourceEndSeq: ch.chunkIndex,
+        },
+      }).catch(() => null);
+
+      let text: string;
+      if (reuse) {
+        text = reuse.content;
+      } else {
+        text = await summarizeWithModel(
+          modelKey,
+          OVERSIZED_SYSTEM,
+          buildOversizedPrompt(ch, existingSummary, modelKey),
+          callBudget.outputReserve,
+        );
+        await prismaConversation.compressionSegment.create({
+          data: {
+            taskId, conversationId: task.conversationId,
+            segmentIndex: 1000 + ci,
+            sourceStartSeq: ch.sourceSeq, sourceEndSeq: ch.chunkIndex,
+            level: 'SEGMENT', content: text, status: 'DONE', modelId: modelKey,
+            inputTokens: estimateTokens(ch.content),
+            outputTokens: estimateTokens(text),
+          },
+        }).catch(() => undefined);
+      }
+      inputTokens += estimateTokens(ch.content);
+      outputTokens += estimateTokens(text);
+      completed++;
+    }
+    plan.segments.length = 0;   // 占位：真实分段数以 segmentsDone 为准
+    plan.segments.push({ index: -1, startSeq: 0, endSeq: 0, messages: [], estimatedTokens: 0, splitFromSingleMessage: false });
 
     await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { segmentsDone: completed } });
 
@@ -682,9 +743,29 @@ export async function runCompressionTask(taskId: string): Promise<RunTaskResult>
     // ---- 9) 清理：仅存储压缩任务，且摘要已提交后才允许 ----
     let deleted = 0;
     if (task.triggerReason === 'storage') {
-      const rowsInRange = await prismaConversation.message.count({
+      // ===== 删除前的绝对条件（任务书 14.3）=====
+      // 条件 2"最终累积摘要已经生成并通过验证"的工程保证：范围内每一条消息
+      // 都必须确实进入过某个分段/分块。修复的缺陷正是在这里才暴露：
+      // 超长消息不在任何分段里，却会被按 seq 范围整段删除。
+      const rowsInRangeFull = await prismaConversation.message.findMany({
         where: { conversationId: task.conversationId, seq: { gte: task.sourceStartSeq, lte: task.sourceEndSeq } },
+        select: { seq: true },
       });
+      const uncovered = rowsInRangeFull.filter((r: any) => !coveredSeqs.has(r.seq)).map((r: any) => r.seq);
+      if (uncovered.length > 0) {
+        // 安全失败：不删任何东西，让任务进入可重试状态并记录确切范围
+        await prismaConversation.contextCompressionTask.update({
+          where: { id: taskId },
+          data: {
+            status: 'FAILED',
+            errorDetails: `拒绝删除：范围内 ${uncovered.length} 条消息未被任何摘要覆盖（seq=${uncovered.slice(0, 20).join(',')}${uncovered.length > 20 ? '...' : ''}）。摘要已提交，但原文保留。`,
+            completedAt: new Date(),
+          },
+        });
+        return { ok: false, taskId, status: 'FAILED' as TaskStatus, error: 'uncovered messages in delete range', segments: completed, mergeLevel, deletedMessages: 0 };
+      }
+
+      const rowsInRange = rowsInRangeFull.length;
       // 只删范围内的；范围外（含压缩期间新消息）一条不碰
       const del = await prismaConversation.message.deleteMany({
         where: { conversationId: task.conversationId, seq: { gte: task.sourceStartSeq, lte: task.sourceEndSeq } },
@@ -740,6 +821,45 @@ function buildSegmentPrompt(seg: { index: number; startSeq: number; endSeq: numb
     `【本段历史】\n${body}`,
     ``,
     `【输出要求】纯 JSON，语义字段见下；coverage.from_seq/to_seq 必须等于本段范围；compression_level 必须为 "segment"。`,
+  ].filter(Boolean).join('\n');
+}
+
+/**
+ * 超长单条消息分块的压缩提示词（任务书 5.11 / 15.2）。
+ * 与 SEGMENT_SYSTEM 的关键差异：输入是**同一条消息的一个结构块**，
+ * 必须让模型知道这一点，避免它把单个块误当成独立对话轮次。
+ */
+const OVERSIZED_SYSTEM = `你是超长单条消息的分块压缩器。输入是同一条历史消息被结构边界切出的一个块。
+这不是回答用户问题，也不是继续对话，更不是一段独立的对话历史。
+必须：
+1. 只依据本块可见内容，不得编造该消息其他块的内容。
+2. 保留精确参数、文件路径、版本号、错误信息、代码标识、配置值与接口名。
+3. 保留本块内完整的逻辑关系；块边界处若语义不完整，显式标注"本块截断/待续"，
+   不得用推测补全。
+4. 不得把本块摘要声明为该消息或该对话的完整记忆。
+5. 若本块内容需要逐字还原（代码/配置/错误日志），保留可定位引用而不是概括掉。
+输出纯 JSON，不要 Markdown 代码块。`;
+
+function buildOversizedPrompt(ch: OversizedChunk, existingSummary: string, modelKey: string): string {
+  const kindLabel: Record<OversizedChunk['kind'], string> = {
+    text: '长篇纯文本（按段落/章节边界切分）',
+    code: '代码（按文件/类/函数/模块边界切分）',
+    structured: '大型结构化结果（按顶层键/数组元素切分）',
+    log: '日志（按时间戳切分，错误行随块保留）',
+    multimodal: '多模态/引用内容',
+    unknown: '未分类（按字符硬切）',
+  };
+  return [
+    `【任务】压缩一条超长历史消息的单个结构块（局部摘要，不是完整历史）。`,
+    ``,
+    `【来源】原始消息序号 #${ch.sourceSeq}；本块为第 ${ch.chunkIndex}/${ch.chunkTotal} 块。`,
+    `【来源定位】${ch.sourceSpan}`,
+    `【内容类型】${kindLabel[ch.kind]}`,
+    `【模型】${modelKey}`,
+    existingSummary ? `【已有累积摘要（仅供背景，不要重复覆盖）】\n${existingSummary}` : '',
+    `【本块内容】\n${ch.content}`,
+    ``,
+    `【输出要求】纯 JSON；必须含 compression_level='segment'、segment_metadata={source_seq,chunk_index,chunk_total,source_span}；coverage.from_seq/to_seq 均填 ${ch.sourceSeq}（表示只覆盖该消息的这一个块）。`,
   ].filter(Boolean).join('\n');
 }
 
