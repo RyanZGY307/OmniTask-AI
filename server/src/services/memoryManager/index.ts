@@ -771,8 +771,47 @@ export async function runCompressionTask(taskId: string): Promise<RunTaskResult>
         where: { conversationId: task.conversationId, seq: { gte: task.sourceStartSeq, lte: task.sourceEndSeq } },
       });
       deleted = del.count;
-      if (deleted !== rowsInRange) {
-        // 删少了不致命（可能有并发插入），但必须记录
+
+      // ===== 写入历史压缩分隔标记（任务书 14.3 末条）=====
+      // storage 压缩会真正删除原始消息。若不加提示，用户滚动历史会看到对话
+      // 从中间开始，无法区分"消息丢失"与"历史已压缩"。
+      // 标记设为 messageType='compressed_history'：前端渲染为中性分隔线
+      //（不用气泡、不用角色样式），不会被误认为模型回复。
+      // 注意它占用一个新 seq（取当前 max+1），因此始终在本次删除范围之外，
+      // 不会被自己或后续任务误删；且会被计入下一次存储压缩的统计。
+      if (deleted > 0) {
+        // seq 不手工指定：db.ts 的 Message seq 中间件会自动分配 max(seq)+1，
+        // 因此标记的 seq 必然大于本次删除范围内的所有 seq。
+        await prismaConversation.message.create({
+          data: {
+            conversationId: task.conversationId,
+            role: 'system',
+            content: `以上历史已压缩为摘要（${deleted} 条原始消息）`,
+            messageType: 'compressed_history',
+            // 该列是 String 类型（本表 schema 约定）：序列化存储，读取方 JSON.parse
+            metadata: JSON.stringify({ compressionTaskId: taskId, deletedMessages: deleted, coveredEndSeq: task.sourceEndSeq }),
+          },
+        }).catch(() => undefined);   // 标记失败不影响压缩结果本身
+      }
+
+      if (deleted > rowsInRange) {
+        // 删除数量**超过**预期范围是数据安全事件：说明删除条件没有真正
+        // 约束住冻结范围（并发、条件失效或代码缺陷）。删除不可逆，必须在
+        // 任务状态上显式标记为异常，而不是一条 warn 就过去。
+        console.error(`[MemoryManager] OVER-DELETE: expected=${rowsInRange} actual=${deleted} task=${taskId}`);
+        await prismaConversation.contextCompressionTask.update({
+          where: { id: taskId },
+          data: {
+            status: 'FAILED',
+            errorDetails: `删除数量超过冻结范围（预期 ${rowsInRange}，实际 ${deleted}），
+                已立刻停止后续删除。请人工核查该对话的消息完整性。`,
+            completedAt: new Date(),
+          },
+        });
+        return { ok: false, taskId, status: 'FAILED' as TaskStatus, error: 'over-delete detected', segments: completed, mergeLevel, deletedMessages: deleted };
+      }
+      if (deleted < rowsInRange) {
+        // 删少了：可能有并发插入占用范围，不致命，但必须留痕
         console.warn(`[MemoryManager] storage delete partial: expected ${rowsInRange}, deleted ${deleted}`);
       }
     }

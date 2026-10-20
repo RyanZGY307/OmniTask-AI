@@ -279,16 +279,28 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
                   </div>
                 )}
 
+                {/* 历史压缩分隔条（任务书 14.3 末条 / 12.4）：
+                    storage 压缩会真正删除已被摘要覆盖的原始消息。若不加任何
+                    提示，用户来回滚动会看到对话从中间开始，无法区分
+                    "消息丢了"与"历史已压缩"。这里渲染成中性分隔线，
+                    不用气泡、不用角色样式，避免被误认为模型回复。 */}
                 {currentMessages.map((msg, i) => (
                   <div key={msg.id} id={`msg-${msg.id}`}>
-                    <MessageBubble
+                    {msg.messageType === 'compressed_history' && (
+                      <div className="my-3 flex items-center gap-3 anim-fade-up" role="separator">
+                        <span className="h-px flex-1 bg-foreground/10" aria-hidden="true" />
+                        <span className="text-[11px] text-muted shrink-0">{msg.content}</span>
+                        <span className="h-px flex-1 bg-foreground/10" aria-hidden="true" />
+                      </div>
+                    )}
+                    {msg.messageType !== 'compressed_history' && <MessageBubble
                       message={msg}
                       isLast={i === currentMessages.length - 1 && !isStreaming}
                       onSaveToWorkspace={() => onSaveMessageToWorkspace(msg.id)}
                       onCopy={(c) => { navigator.clipboard.writeText(c); store.showToast('已复制'); }}
                       onEdit={(c) => setEditContent(c)}
                       onRetry={() => conversationId && store.retryMessage(conversationId)}
-                    />
+                    />}
                   </div>
                 ))}
 
