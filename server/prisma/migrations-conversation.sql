@@ -131,7 +131,12 @@ WHERE m.id = o.id AND m.seq IS NULL;
 -- 后续新消息由服务端用「当前 max+1」分配（见 memoryManager/seq.ts），
 -- 这里不依赖 Postgres 序列，避免多进程/多实例下序列与租户边界冲突。
 
--- 索引：按对话取序号范围（压缩取前缀、保留后缀都走此索引）
+-- 索引+唯一约束：按对话取序号范围（压缩取前缀、保留后缀都走此索引）。
+-- 唯一性是并发分配的兜底 —— 两个请求同时取 max+1 时后一个会撞 P2002，
+-- 由 db.ts 的 seq 中间件重读并递增，而不是默默产生两个相同 seq
+-- （相同 seq 会让"压缩截止位置"与"不误删新消息"两个边界同时失效）。
+-- 回填已执行完（每条对话内 ROW_NUMBER 唯一），故建唯一索引不会失败。
+CREATE UNIQUE INDEX IF NOT EXISTS "Message_conversationId_seq_key" ON "Message"("conversationId", "seq");
 CREATE INDEX IF NOT EXISTS "Message_conversationId_seq_idx" ON "Message"("conversationId", "seq");
 
 -- 2) ConversationSummary — 每对话的当前累积摘要（可版本化）

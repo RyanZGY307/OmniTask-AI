@@ -8,6 +8,7 @@ import { getDynamicModels } from '../services/configSync';
 import { chatWithFallback } from '../services/models';
 import { MODEL_REGISTRY } from '../config';
 import { chatQueue } from '../services/chatQueue';
+import { buildModelContext, evaluateStorageCompression, COMPRESSION_STATUS_TEXT } from '../services/memoryManager';
 
 // Human-readable labels for model_switch SSE events. Falls back to the
 // raw key when a model is not in the registry (dynamic provider models).
@@ -442,7 +443,35 @@ async function buildAgentChat(
     baseSystemPrompt +
     (accountSkillsBlock ? '\n\n---\n\n' + accountSkillsBlock : '') +
     '\n\n---\n\n' + buildKnowledgeTimelinessBlock();
-  const chatMessages = [{ role: 'system', content: finalSystemPrompt }, ...conversationHistory, { role: 'user', content: message }];
+  // ===== 统一对话记忆管理：上下文拼装唯一出口 =====
+  // 旧代码：[{system}, ...conversationHistory, {user}] —— 历史全量进上下文，
+  // 不看 Token、不读摘要、不触发压缩。接入点唯一（Chat 与 Agent 共用本函数），
+  // 因此在这里替换即可覆盖两个入口，同时消除 slice(-20)/slice(-10)/slice(-5)
+  // 等多处口径不一致。
+  //
+  // 压缩只影响"后台任务"与"未来的请求"；本次请求仍用当前可用上下文返回，
+  // 不被后台任务阻塞。新对话（conversationId 未落库）走 fallbackHistory。
+  const contextPlan = await buildModelContext({
+    conversationId: conversationId && conversationId !== 'new' ? conversationId : '',
+    userId,
+    systemPrompt: finalSystemPrompt,
+    fixedPrompts: contextMemorySection || undefined,
+    currentRequest: message,
+    toolDefinitions: effectiveSkillIds?.length ? JSON.stringify(effectiveSkillIds) : undefined,
+    modelKey,
+    fallbackHistory: conversationHistory,
+  }).catch(() => null);
+
+  const chatMessages = contextPlan
+    ? contextPlan.messages
+    : [
+        { role: 'system', content: finalSystemPrompt },
+        ...conversationHistory,
+        { role: 'user', content: message },
+      ];
+  // 上下文预算与压缩状态：供观测与 SSE 状态提示；缺失时不影响主流程
+  const contextBudget = contextPlan?.budget ?? null;
+  const activeCompressionTaskId = contextPlan?.activeCompressionTaskId ?? null;
 
   addSessionEvent(session.sessionId, 'prompt_compiled', {
     ...(prResult ? { source: 'prompt_runtime', trace_id: prResult.traceId, composition_hash: prResult.compositionHash, scenario: prResult.analysis.scenario, selected_atoms: prResult.composition.selected_atoms } : { source: 'compiler', ...compiled.metadata }),
@@ -542,6 +571,8 @@ async function buildAgentChat(
     promptRuntime: prResult,
     resolvedTemperature,
     routingSource, scenarioRoutingId,
+    // 上下文预算与压缩状态（供 SSE 提示与观测；不影响主流程）
+    contextBudget, activeCompressionTaskId,
   };
 }
 
@@ -1393,7 +1424,26 @@ router.post('/:id/messages', authMiddleware, rateLimit(60000, 30), async (req: A
     // SSE 预连接（先建响应再跑预处理，首字节即时）
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write(`data: ${JSON.stringify({ type: 'accepted' })}\n\n`);
-    const agent = await buildAgentChat(userId, user, message, mode, requestedModel, historyMessages.slice(-20), traceId, conversationId);
+    // ===== 上下文压缩状态（对话感知）=====
+    // 任务书要求"聊天时正在发生历史压缩"必须可感知、可理解，且前端文案固定。
+    // 这里只做状态推送：压缩本身已在 buildModelContext 里异步排队，
+    // 不阻塞、不中断本次回复（"当前已经成功提交的模型推理不应因后台压缩被
+    // 无故中断"）。
+    const agent = await buildAgentChat(userId, user, message, mode, requestedModel, historyMessages, traceId, conversationId);
+
+    // 机制 A（存储压缩）触发判断：消息数达到阈值时排队，与上下文压缩互不阻塞。
+    // 同一对话同时只允许一个活动任务，冲突时 enqueueIfIdle 返回 null。
+    void (async () => {
+      try {
+        const d = await evaluateStorageCompression(conversationId);
+        if (d.shouldCompress && d.compressStartSeq && d.compressEndSeq) {
+          const { enqueueIfIdle } = await import('../services/memoryManager');
+          await enqueueIfIdle(conversationId, userId, 'storage', d.compressStartSeq, d.compressEndSeq, agent.modelKey);
+        }
+      } catch (err: any) {
+        console.warn('[Chat] storage compression trigger failed:', err?.message);
+      }
+    })();
 
     if (!agent.modelInfo) {
       await addError(traceId, { userId, errorType: 'validation', message: `无效模型: ${agent.modelKey}`, stage: 'router', severity: 'WARN' });
@@ -1441,6 +1491,19 @@ router.post('/:id/messages', authMiddleware, rateLimit(60000, 30), async (req: A
       if (clientDisconnected || res.destroyed || res.writableEnded) return;
       try { res.write(payload); } catch { clientDisconnected = true; };
     };
+
+    // ===== 上下文压缩状态（对话感知）=====
+    // 任务书要求"聊天时正在发生历史压缩"必须可感知、可理解，且文案固定。
+    // 只做状态推送：压缩已在 buildModelContext 内异步排队，不阻塞、
+    // 不中断本次回复（已成功提交的模型推理不应因后台压缩被无故中断）。
+    if (agent.activeCompressionTaskId) {
+      safeWrite(`data: ${JSON.stringify({
+        type: 'context_compression',
+        status: 'compressing',
+        text: COMPRESSION_STATUS_TEXT,
+        taskId: agent.activeCompressionTaskId,
+      })}\n\n`);
+    }
 
     // ===== High Server Load / Frequency Queue Slot Acquisition =====
     let queueTicket: any = null;
