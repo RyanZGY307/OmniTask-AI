@@ -3,7 +3,8 @@
 // For websites without API/OAuth — uses browser automation as fallback
 // ================================================================
 
-import { BaseConnector, ConnectorContext, ConnectorResult } from './base';
+import { BaseConnector, ConnectorContext, ConnectorResult, HealthResult } from './base';
+import { healthUnknown } from '../contract';
 
 export class GenericWebConnector extends BaseConnector {
   readonly type = 'generic_web' as const;
@@ -35,8 +36,16 @@ export class GenericWebConnector extends BaseConnector {
     await browserConnector.revoke(ctx);
   }
 
-  async healthCheck(_ctx: ConnectorContext): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
-    return { ok: true, latencyMs: 1 };
+  async healthCheck(ctx: ConnectorContext): Promise<HealthResult> {
+    // 旧版这里直接返回 `{ ok: true, latencyMs: 1 }`：不发任何请求、写死延迟，
+    // 属于伪造遥测（P0-1）。generic_web 本身没有独立传输，健康状态完全由
+    // 浏览器连接器决定，因此如实委派；无法委派时返回 unknown 而非假成功。
+    try {
+      const { browserConnector } = await import('./browser');
+      return await browserConnector.healthCheck(ctx);
+    } catch (err: any) {
+      return healthUnknown(`Generic web health check could not delegate: ${err?.message || err}`);
+    }
   }
 }
 

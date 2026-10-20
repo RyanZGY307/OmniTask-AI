@@ -10,7 +10,8 @@
 // ================================================================
 
 import crypto from 'crypto';
-import { BaseConnector, ConnectorContext, ConnectorResult } from './base';
+import { BaseConnector, ConnectorContext, ConnectorResult, HealthResult } from './base';
+import { R, healthy, unhealthy } from '../contract';
 import { prisma } from '../../services/db';
 import { storeCredential, revokeCredential } from '../vault';
 
@@ -133,24 +134,24 @@ export class BrowserConnector extends BaseConnector {
   async execute(ctx: ConnectorContext, toolId: string, args: Record<string, any>): Promise<ConnectorResult> {
     const pw = await getPlaywright();
     const sessionId = args.sessionId || ctx.sessionId;
-    if (!sessionId) return { ok: false, error: 'No active session' };
+    if (!sessionId) return R.fail('No active session');
 
     // P0-5: Restore session from DB
     const sessionDb = await prisma.browserSession.findFirst({
       where: { userId: ctx.userId, sessionId, status: 'active' },
     });
-    if (!sessionDb) return { ok: false, error: 'Session not found or expired' };
+    if (!sessionDb) return R.fail('Session not found or expired');
 
     // Get stored cookies/state from vault
     const conn = await prisma.connection.findFirst({
       where: { id: ctx.connectionId, userId: ctx.userId },
       select: { credentialRef: true, providerId: true },
     });
-    if (!conn?.credentialRef) return { ok: false, error: 'No credential for session' };
+    if (!conn?.credentialRef) return R.fail('No credential for session');
 
     const { getSecret } = await import('../vault');
     const stateStr = await getSecret(conn.credentialRef, ctx.userId);
-    if (!stateStr) return { ok: false, error: 'Failed to decrypt session state' };
+    if (!stateStr) return R.fail('Failed to decrypt session state');
 
     const sessionState: BrowserSessionState = JSON.parse(stateStr);
 
@@ -174,7 +175,7 @@ export class BrowserConnector extends BaseConnector {
         case 'input':
           return this.cmdInput(page, args.selector, args.value);
         case 'tab.list':
-          return { ok: true, verified: true, data: sessionState.tabs };
+          return R.success(sessionState.tabs, true);
         case 'tab.create':
           return this.cmdTabCreate(page, args.url, sessionId);
         case 'tab.switch':
@@ -187,64 +188,66 @@ export class BrowserConnector extends BaseConnector {
           return this.cmdRestoreSession(sessionState);
         case 'session.invalidate':
           await this.cmdInvalidateSession(sessionId);
-          return { ok: true, verified: true };
+          return R.success(undefined, true);
         default:
-          return { ok: false, error: `Unknown browser command: ${norm}` };
+          return R.notImplemented(`browser command '${norm}'`);
       }
     } catch (err: any) {
-      return { ok: false, error: err.message };
+      return R.fail(err.message);
     }
   }
 
   private async cmdNavigate(page: any, url: string, _sessionId: string): Promise<ConnectorResult> {
     await page.goto(url, { waitUntil: 'networkidle' });
-    return { ok: true, verified: true, data: { url: page.url(), title: await page.title() } };
+    return R.success({ url: page.url(), title: await page.title() }, true);
   }
 
   private async cmdScreenshot(page: any, args: any): Promise<ConnectorResult> {
     await page.goto(args.url, { waitUntil: 'domcontentloaded' });
     const buf = await page.screenshot({ fullPage: args.fullPage ?? false });
-    return { ok: true, verified: true, data: { type: 'image/png', base64: buf.toString('base64') } };
+    return R.success({ type: 'image/png', base64: buf.toString('base64') }, true);
   }
 
   private async cmdRead(page: any, args: any): Promise<ConnectorResult> {
     await page.goto(args.url, { waitUntil: 'domcontentloaded' });
     const content = await page.content();
-    return { ok: true, verified: true, data: { content, url: page.url() } };
+    return R.success({ content, url: page.url() }, true);
   }
 
   private async cmdClick(page: any, selector: string): Promise<ConnectorResult> {
     await page.locator(selector).click();
     await page.waitForTimeout(1000);
-    return { ok: true, verified: true, data: { url: page.url() } };
+    return R.success({ url: page.url() }, true);
   }
 
   private async cmdInput(page: any, selector: string, value: string): Promise<ConnectorResult> {
     await page.locator(selector).fill(value);
-    return { ok: true, verified: true };
+    return R.success(undefined, true);
   }
 
   private async cmdTabCreate(_page: any, url: string, _sessionId: string): Promise<ConnectorResult> {
-    return { ok: true, data: { tabId: `tab_${Date.now()}`, url } };
+    return R.success({ tabId: `tab_${Date.now()}`, url });
   }
 
   private async cmdTabSwitch(state: BrowserSessionState, tabId: string): Promise<ConnectorResult> {
     const tab = state.tabs.find((t) => t.id === tabId);
-    if (!tab) return { ok: false, error: `Tab ${tabId} not found` };
-    return { ok: true };
+    if (!tab) return R.fail(`Tab ${tabId} not found`);
+    return R.success({ tabId, url: tab.url });
   }
 
   private async cmdTabClose(_state: BrowserSessionState, tabId: string): Promise<ConnectorResult> {
-    // Tab close would require browser context access; mark as not implemented for now
-    return { ok: true };
+    // Tab close requires broker-side access to every open browser context, which
+    // this connector does not hold. 旧版返回 `{ ok: true }` 是伪造成功 —— 调用方
+    // 会以为标签页已关闭。改为明确的 not_implemented，并把 tabId 带回便于诊断。
+    return R.notImplemented('browser tab.close', { tabId });
   }
 
   private cmdSaveSession(state: BrowserSessionState): ConnectorResult {
-    return { ok: true, data: { sessionId: state.contextId } };
+    return R.success({ sessionId: state.contextId });
   }
 
   private cmdRestoreSession(state: BrowserSessionState): ConnectorResult {
-    return { ok: true, data: { restored: true, tabs: state.tabs.length } };
+    return R.success({ restored: true, tabs: state.tabs.length });
   }
 
   private async cmdInvalidateSession(sessionId: string): Promise<void> {
@@ -317,14 +320,16 @@ export class BrowserConnector extends BaseConnector {
     await prisma.connection.update({ where: { id: ctx.connectionId }, data: { status: 'revoked' } });
   }
 
-  async healthCheck(_ctx: ConnectorContext): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  async healthCheck(_ctx: ConnectorContext): Promise<HealthResult> {
+    // 旧版启动了一次真实浏览器，却把 latencyMs 写死成 50 —— 有真实测量点却不测。
+    const start = Date.now();
     try {
       const pw = await getPlaywright();
       const browser = await pw.chromium.launch({ headless: true });
       await browser.close();
-      return { ok: true, latencyMs: 50 };
+      return healthy(Date.now() - start);
     } catch (err: any) {
-      return { ok: false, error: err.message };
+      return unhealthy(err?.message || String(err));
     }
   }
 }

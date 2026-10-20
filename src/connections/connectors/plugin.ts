@@ -11,7 +11,8 @@
 // WARNING: Never return fake success. Return NOT_IMPLEMENTED/FAILED explicitly.
 // ================================================================
 
-import { BaseConnector, ConnectorContext, ConnectorResult } from './base';
+import { BaseConnector, ConnectorContext, ConnectorResult, HealthResult } from './base';
+import { R, healthy, degraded, unhealthy, healthUnknown } from '../contract';
 import { prisma } from '../../services/db';
 
 export class PluginConnector extends BaseConnector {
@@ -40,7 +41,7 @@ export class PluginConnector extends BaseConnector {
 
   async execute(ctx: ConnectorContext, toolId: string, args: Record<string, any>): Promise<ConnectorResult> {
     const conn = await prisma.connection.findFirst({ where: { id: ctx.connectionId, userId: ctx.userId } });
-    if (!conn) return { ok: false, verified: false, error: 'Connection not found' };
+    if (!conn) return R.fail('Connection not found');
 
     // P0-13: Validate plugin is installed and authorized
     const pluginInstance = await prisma.pluginInstance.findFirst({
@@ -49,30 +50,29 @@ export class PluginConnector extends BaseConnector {
     });
 
     if (!pluginInstance) {
-      return { ok: false, verified: false, error: 'Plugin not installed or not authorized' };
+      return R.fail('Plugin not installed or not authorized');
     }
 
     // P0-13: Check if plugin supports this tool
     const manifest = (pluginInstance.config as any) || {};
     const supportedTools = (pluginInstance.config as any)?.tools || [];
     if (!supportedTools.includes(toolId)) {
-      return { ok: false, verified: false, error: `Plugin does not support tool: ${toolId}` };
+      return R.fail(`Plugin does not support tool: ${toolId}`);
     }
 
     // P0-13: Validate sandbox policy
     const sandboxPolicy = (pluginInstance.config as any)?.sandboxPolicy;
     if (sandboxPolicy?.restrictedTools?.includes(toolId)) {
-      return { ok: false, verified: false, error: 'Tool restricted by sandbox policy' };
+      return R.fail('Tool restricted by sandbox policy');
     }
 
     // P0-13: Plugin execution runtime is not yet implemented
     // Return NOT_IMPLEMENTED instead of fake success
-    return {
-      ok: false,
-      verified: false,
-      error: `Plugin runtime not implemented for: ${toolId}. Plugin ${manifest?.name || 'unknown'} requires explicit execution engine.`,
-      data: { pluginStatus: pluginInstance.status, required: 'plugin_execution_engine' },
-    };
+    // P0-0: 保持 NOT_IMPLEMENTED 为独立状态 —— 不得用成功响应替代。
+    return R.notImplemented(
+      `Plugin runtime not implemented for: ${toolId}. Plugin ${manifest?.name || 'unknown'} requires explicit execution engine.`,
+      { pluginStatus: pluginInstance.status, required: 'plugin_execution_engine' },
+    );
   }
 
   async refresh(_ctx: ConnectorContext): Promise<void> {
@@ -86,9 +86,9 @@ export class PluginConnector extends BaseConnector {
     await prisma.connection.update({ where: { id: ctx.connectionId }, data: { status: 'revoked' } });
   }
 
-  async healthCheck(ctx: ConnectorContext): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  async healthCheck(ctx: ConnectorContext): Promise<HealthResult> {
     const conn = await prisma.connection.findFirst({ where: { id: ctx.connectionId, userId: ctx.userId } });
-    if (!conn) return { ok: false, error: 'Connection not found' };
+    if (!conn) return unhealthy('Connection not found');
 
     // Check plugin instance health
     const plugin = await prisma.pluginInstance.findFirst({
@@ -96,11 +96,18 @@ export class PluginConnector extends BaseConnector {
       select: { healthStatus: true, lastHealthCheck: true },
     });
 
-    if (!plugin) return { ok: false, error: 'No plugin instance found' };
-    if (plugin.healthStatus === 'unhealthy') return { ok: false, error: 'Plugin unhealthy' };
-    if (plugin.healthStatus === 'degraded') return { ok: true, latencyMs: 100, error: 'Degraded' };
+    if (!plugin) return unhealthy('No plugin instance found');
+    if (plugin.healthStatus === 'unhealthy') return unhealthy('Plugin unhealthy');
+    if (plugin.healthStatus === 'degraded') {
+      // 旧版：ok:true + 写死 latencyMs:100 + error:'Degraded'。降级不应报健康，
+      // 更不应伪造延迟。这里如实报 degraded；没有真实测量就不填 latencyMs。
+      return degraded(undefined, 'Plugin reported degraded status');
+    }
 
-    return { ok: true, latencyMs: 10, error: 'Plugin health check passed (simulated)' };
+    // 旧版：返回 `latencyMs: 10` 与 'Plugin health check passed (simulated)'
+    // —— 从未联系过插件进程，是伪造遥测。插件执行引擎不存在（execute() 已诚实
+    // 返回 not_implemented），因此健康状态同样必须如实：无法探测即 unknown。
+    return healthUnknown('Plugin execution engine is not implemented; no live process to probe');
   }
 }
 

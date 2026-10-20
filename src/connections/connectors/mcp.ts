@@ -13,7 +13,9 @@
 // Health check MUST actually hit the MCP server endpoint.
 // ================================================================
 
-import { BaseConnector, ConnectorContext, ConnectorResult } from './base';
+import { BaseConnector, ConnectorContext, ConnectorResult, HealthResult } from './base';
+import { R, healthy, unhealthy, discovered, discoveryFailed } from '../contract';
+import type { DiscoveryResult } from '../contract';
 import { prisma } from '../../services/db';
 
 export class MCPConnector extends BaseConnector {
@@ -49,14 +51,17 @@ export class MCPConnector extends BaseConnector {
     return { credentialId: credId, accountName: `MCP: ${new URL(serverUrl).hostname}` };
   }
 
-  /** P0-14: Discover available tools from MCP server */
-  async discoverTools(ctx: ConnectorContext): Promise<{ tools: any[]; ok: boolean; error?: string }> {
+  /**
+   * P0-1: 发现结果的返回类型已改为 DiscoveryResult（判别联合），
+   * 使「失败却返回 ok:true」不可表示。发现不到工具 ≠ 发现成功。
+   */
+  async discoverTools(ctx: ConnectorContext): Promise<DiscoveryResult> {
     const conn = await prisma.connection.findFirst({ where: { id: ctx.connectionId, userId: ctx.userId } });
-    if (!conn) return { tools: [], ok: false, error: 'Connection not found' };
+    if (!conn) return discoveryFailed('connection_failed', 'Connection not found');
 
     const { getSecret } = await import('../vault');
     const configStr = await getSecret(conn.credentialRef!, ctx.userId);
-    if (!configStr) return { tools: [], ok: false, error: 'Failed to decrypt credentials' };
+    if (!configStr) return discoveryFailed('auth_failed', 'Failed to decrypt credentials');
 
     const config = JSON.parse(configStr) as any;
     const baseUrl = config.serverUrl.replace(/\/$/, '');
@@ -78,27 +83,31 @@ export class MCPConnector extends BaseConnector {
           if (res.ok) {
             const data = await res.json() as any;
             const tools = data?.tools || data?.result?.tools || [];
-            return { tools, ok: true };
+            return discovered(tools);
           }
         } catch { /* try next endpoint */ }
       }
 
-      return { tools: [], ok: true, error: 'Could not discover tools — MCP server may not support standard endpoints' };
+      // 旧版：发现失败却返回 { tools: [], ok: true } —— UI 会显示"发现完成，
+      // 可用工具 0"。按用户硬规则「发现不到工具不等于发现成功」，改为明确的
+      // protocol_incompatible，让上层能区分「确实没有工具」与「探不到」。
+      return discoveryFailed('protocol_incompatible',
+        'Could not discover tools — MCP server may not support standard endpoints');
     } catch (err: any) {
-      return { tools: [], ok: false, error: err.message };
+      return discoveryFailed('connection_failed', err.message);
     }
   }
 
   async execute(ctx: ConnectorContext, toolId: string, args: Record<string, any>): Promise<ConnectorResult> {
     const conn = await prisma.connection.findFirst({ where: { id: ctx.connectionId, userId: ctx.userId } });
-    if (!conn) return { ok: false, verified: false, error: 'Connection not found' };
+    if (!conn) return R.fail('Connection not found');
 
     const { getSecret } = await import('../vault');
     const configStr = await getSecret(conn.credentialRef!, ctx.userId);
-    if (!configStr) return { ok: false, verified: false, error: 'Failed to decrypt credentials' };
+    if (!configStr) return R.fail('Failed to decrypt credentials');
 
     const config = JSON.parse(configStr) as any;
-    if (!config?.serverUrl) return { ok: false, verified: false, error: 'MCP server URL not configured' };
+    if (!config?.serverUrl) return R.fail('MCP server URL not configured');
 
     const baseUrl = config.serverUrl.replace(/\/$/, '');
 
@@ -117,47 +126,36 @@ export class MCPConnector extends BaseConnector {
 
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
-        return {
-          ok: false,
-          verified: false,
-          error: `MCP ${toolId} failed: ${res.status} ${errText.slice(0, 200)}`,
-          data: { httpStatus: res.status },
-        };
+        return R.fail(`MCP ${toolId} failed: ${res.status} ${errText.slice(0, 200)}`, { httpStatus: res.status });
       }
 
       const data: any = await res.json();
 
       // P0-12: Verify MCP response has expected structure
       if (!data?.result && !data?.content && !data?.data) {
-        return {
-          ok: true,
-          verified: false,
-          error: 'MCP returned empty result',
-          data,
-        };
+        // 旧版：ok:true + verified:false + error:'MCP returned empty result'
+        // —— 三方字段互相矛盾。空结果不是成功，改为明确的 unknown：外部可能
+        // 已执行但我们拿不到可核实内容，调用方必须能够区分。
+        return R.unknown('MCP returned empty result', data);
       }
 
-      return {
-        ok: true,
-        verified: true,
-        data: data?.result || data?.content || data?.data,
-      };
+      return R.success(data?.result || data?.content || data?.data, true);
     } catch (err: any) {
-      return { ok: false, verified: false, error: `MCP invoke failed: ${err.message}` };
+      return R.fail(`MCP invoke failed: ${err.message}`);
     }
   }
 
   /** P0-14: Real health check — actually ping the MCP server */
-  async healthCheck(ctx: ConnectorContext): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  async healthCheck(ctx: ConnectorContext): Promise<HealthResult> {
     const conn = await prisma.connection.findFirst({ where: { id: ctx.connectionId, userId: ctx.userId } });
-    if (!conn) return { ok: false, error: 'Connection not found' };
+    if (!conn) return unhealthy('Connection not found');
 
     const { getSecret } = await import('../vault');
     const configStr = await getSecret(conn.credentialRef!, ctx.userId);
-    if (!configStr) return { ok: false, error: 'Failed to decrypt credentials' };
+    if (!configStr) return unhealthy('Failed to decrypt credentials');
 
     const config = JSON.parse(configStr) as any;
-    if (!config?.serverUrl) return { ok: false, error: 'MCP server URL not configured' };
+    if (!config?.serverUrl) return unhealthy('MCP server URL not configured');
 
     const baseUrl = config.serverUrl.replace(/\/$/, '');
     const start = Date.now();
@@ -179,18 +177,16 @@ export class MCPConnector extends BaseConnector {
           });
           if (res.ok) {
             const latency = Date.now() - start;
-            return {
-              ok: true,
-              latencyMs: latency,
-              error: `HTTP ${res.status} at ${endpoint}`,
-            };
+            // 旧版：成功分支仍写 error 字段，导致按 error 判定的调用方把健康
+            // 连接报成异常。成功即成功，只保留实测延迟与探测端点。
+            return healthy(latency, endpoint);
           }
         } catch { /* try next */ }
       }
 
-      return { ok: false, latencyMs: Date.now() - start, error: 'All MCP health endpoints failed' };
+      return unhealthy('All MCP health endpoints failed');
     } catch (err: any) {
-      return { ok: false, latencyMs: Date.now() - start, error: err.message };
+      return unhealthy(err.message);
     }
   }
 

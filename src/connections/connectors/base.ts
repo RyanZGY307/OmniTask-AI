@@ -13,13 +13,13 @@
 // ================================================================
 
 import type { RiskLevel, ConnectorType } from '../types';
+import type { ConnectorResult, HealthResult } from '../contract';
+import { isSuccess } from '../contract';
 
-export interface ConnectorResult {
-  ok: boolean;
-  verified?: boolean;
-  data?: any;
-  error?: string;
-}
+// ConnectorResult 与 HealthResult 的定义已移至 ../contract。
+// 那里用判别联合让「成功分支带 error」「失败分支无 error」在类型上不可表示，
+// 从而杜绝 ok:true + error 并存的虚假状态。此处仅做再导出以兼容既有 import。
+export type { ConnectorResult, HealthResult };
 
 export interface ConnectorContext {
   userId: string;
@@ -71,11 +71,11 @@ export abstract class BaseConnector {
   abstract revoke(ctx: ConnectorContext): Promise<void>;
 
   /** Health check */
-  abstract healthCheck(ctx: ConnectorContext): Promise<{ ok: boolean; latencyMs?: number; error?: string }>;
+  abstract healthCheck(ctx: ConnectorContext): Promise<HealthResult>;
 
   /** Verify post-action result against expected postcondition */
   protected verify(result: ConnectorResult, expectation: Record<string, any>): boolean {
-    if (!result.ok) return false;
+    if (!isSuccess(result)) return false;
     if (!expectation || Object.keys(expectation).length === 0) return true;
     const actual = result.data || {};
     for (const [key, val] of Object.entries(expectation)) {

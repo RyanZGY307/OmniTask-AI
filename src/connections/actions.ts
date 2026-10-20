@@ -13,6 +13,8 @@
 import { prisma } from '../services/db';
 import { GITHUB_TOOLS, executeGitHubTool } from './github';
 import { checkPermission } from './permissionEngine';
+import { R, fromLegacy } from './contract';
+import type { ConnectorResult } from './connectors/base';
 import { addEvent, createTrace, newTraceId, newRequestId } from '../services/trace';
 import { getProvider, getTool, LEGACY_TOOLS } from './providers';
 import { selectConnector, listConnectors } from './connectors/base';
@@ -39,10 +41,16 @@ export interface CreateActionInput {
   requestedBy?: string;
 }
 
+// P0-1: 旧联合只有 executed/pending/denied 三种，导致失败被硬塞进 executed:true。
+// 现在增加明确的失败终态，并把 result 的真实 status 一并带回，让调用方（路由
+// 与后续 Agent）能区分「明确失败」「结果未知」「能力未实现」「需要授权」。
 export type CreateActionResult =
-  | { executed: true; status: 'executed'; result: unknown; actionId: string }
+  | { executed: true; status: 'executed'; result: unknown; resultStatus: 'success'; actionId: string }
   | { executed: false; actionId: string; status: 'pending'; preview: unknown }
-  | { executed: false; actionId: string; status: 'denied'; reason: string };
+  | { executed: false; actionId: string; status: 'denied'; reason: string }
+  | { executed: false; actionId: string; status: 'failed'; result: unknown; resultStatus: Exclude<ConnectorResult['status'], 'success'>; reason: string }
+  | { executed: false; actionId: string; status: 'verifying'; result: unknown; resultStatus: 'unknown'; reason: string }
+  | { executed: false; actionId: string; status: 'waiting_auth'; result: unknown; resultStatus: 'auth_required'; reason: string };
 
 function buildPreview(toolId: string, args: any): Record<string, any> {
   // Check legacy GitHub tools first
@@ -73,20 +81,23 @@ async function executeAction(
   userId: string,
   toolId: string,
   args: any,
-): Promise<{ ok: boolean; verified: boolean; data?: any; error?: string }> {
-  // P0-2: Unified execution — no dual-path
+): Promise<ConnectorResult> {
+  // P0-2: Unified execution — no dual-path。返回类型统一为 ConnectorResult，
+  // 使上层（createAction/approveAction）能区分明确失败、未知与未实现。
   const conn = await prisma.connection.findFirst({ where: { id: connectionId, userId }, select: { providerId: true, credentialRef: true, account: true, authMethod: true } });
-  if (!conn) return { ok: false, verified: false, error: 'Connection not found' };
+  if (!conn) return R.fail('Connection not found');
 
   // 1. Try native adapter first (GitHub, etc.)
   if (GITHUB_TOOLS[toolId]) {
+    // GitHub 原生适配器已改用 ConnectorResult（executeGitHubTool 的
+    // ToolResult 现为 ConnectorResult 别名），无需再经旧形状转换。
     const result = await executeGitHubTool({ connectionId, userId, toolId, args });
-    return { ok: result.ok, verified: result.verified ?? true, data: result.data, error: result.error };
+    return result;
   }
 
   // 2. Use universal connector with precise capability matching
   const selection = selectConnector(conn.providerId, toolId, { _authMethod: conn.authMethod });
-  if (!selection) return { ok: false, verified: false, error: `No connector for ${conn.providerId}/${toolId}` };
+  if (!selection) return R.fail(`No connector for ${conn.providerId}/${toolId}`);
 
   const ctx = {
     userId,
@@ -98,10 +109,11 @@ async function executeAction(
   };
 
   try {
-    const result = await selection.connector.execute(ctx, toolId, args);
-    return { ok: result.ok, verified: result.verified ?? false, data: result.data, error: result.error } as any;
+    // 旧版在此把连接器结果拍平成旧形状，丢失 status 语义。
+    // 现在 executeAction 整体改用 ConnectorResult，失败/未知/未实现分类直达上层。
+    return await selection.connector.execute(ctx, toolId, args);
   } catch (err: any) {
-    return { ok: false, verified: false, error: err.message };
+    return R.fail(err?.message || String(err));
   }
 }
 
@@ -122,7 +134,14 @@ export async function createAction(input: CreateActionInput): Promise<CreateActi
   // 1. Execute immediately for auto / readonly
   if (check.decision === 'allow') {
     await addEvent(trace, 'PERMISSION', { toolId, riskLevel: riskForTool(toolId), decision: 'allow' }, 'success');
-    const result: any = await executeAction(connectionId, userId, toolId, args);
+    const result: ConnectorResult = await executeAction(connectionId, userId, toolId, args);
+    // P0-1: 旧版一律 `result.ok ? 'executed' : 'failed'`，且返回体恒为
+    // executed:true —— 调用方拿到失败还以为执行成功。按真实 status 分流。
+    const succeeded = result.status === 'success';
+    const persistedStatus = succeeded ? 'executed'
+      : result.status === 'unknown' ? 'verifying'
+      : result.status === 'auth_required' ? 'waiting_auth'
+      : 'failed';
     const action = await prisma.actionRequest.create({
       data: {
         traceId: trace,
@@ -131,15 +150,38 @@ export async function createAction(input: CreateActionInput): Promise<CreateActi
         toolId,
         action: toolId,
         riskLevel: riskForTool(toolId),
-        status: result.ok ? 'executed' : 'failed',
+        status: persistedStatus,
         preview: JSON.stringify(buildPreview(toolId, args)),
         requestedBy,
         decidedBy: requestedBy,
-        result: JSON.stringify({ ok: result.ok, verified: result.verified, data: result.data ?? null, error: result.error || null }),
+        result: JSON.stringify({
+          status: result.status,
+          verified: succeeded ? !!result.verified : false,
+          data: (result as any).data ?? null,
+          error: succeeded ? null : result.error,
+        }),
       },
     });
-    await addEvent(trace, 'TOOL', { toolId, ok: result.ok, verified: result.verified }, result.ok ? 'success' : 'error');
-    return { executed: true, status: 'executed' as const, result: result as any, actionId: action.id };
+    await addEvent(trace, 'TOOL',
+      { toolId, status: result.status, verified: succeeded ? !!result.verified : false },
+      succeeded ? 'success' : result.status === 'unknown' ? 'unknown' : 'error');
+    // 失败终态把真实 status 与原因一并带回，调用方不再只能看到 executed:false。
+    if (succeeded) {
+      return { executed: true, status: 'executed', resultStatus: 'success', result: result as any, actionId: action.id };
+    }
+    const rs = result.status;
+    const reason = result.error;
+    const terminal = rs === 'unknown' ? 'verifying'
+      : rs === 'auth_required' ? 'waiting_auth'
+      : 'failed';
+    return {
+      executed: false,
+      status: terminal as any,
+      resultStatus: rs as any,
+      result: result as any,
+      reason,
+      actionId: action.id,
+    } as any;
   }
 
   // 2. Deny
@@ -213,18 +255,34 @@ export async function approveAction(
 
   const preview = JSON.parse(action.preview || '{}');
   const result = await executeAction(action.connectionId!, userId, action.toolId, preview.args);
+  // P0-1: 旧版一律写成 `result.ok ? 'executed' : 'failed'`，把「结果未知」和
+  // 「能力未实现」也压成明确失败 —— 上层无法知道该重试还是该人工介入。
+  // ActionRequest.status 枚举本来就有 waiting_auth / verifying，这里如实分流。
+  const persistedStatus = result.status === 'success' ? 'executed'
+    : result.status === 'unknown' ? 'verifying'
+    : result.status === 'auth_required' ? 'waiting_auth'
+    : result.status === 'not_implemented' || result.status === 'unavailable' ? 'failed'
+    : 'failed';
   await prisma.actionRequest.update({
     where: { id: action.id },
     data: {
-      status: result.ok ? 'executed' : 'failed',
+      status: persistedStatus,
       decidedBy,
-      result: JSON.stringify({ ok: result.ok, verified: result.verified, data: result.data ?? null, error: result.error || null }),
+      result: JSON.stringify({
+        status: result.status,
+        verified: result.status === 'success' ? !!result.verified : false,
+        data: (result as any).data ?? null,
+        error: result.status === 'success' ? null : result.error,
+      }),
     },
   });
   if (action.traceId) {
-    await addEvent(action.traceId, 'APPROVAL', { actionId, ok: result.ok, verified: result.verified, decidedBy }, result.ok ? 'success' : 'error');
+    const ok = result.status === 'success';
+    await addEvent(action.traceId, 'APPROVAL',
+      { actionId, status: result.status, verified: ok ? !!(result as any).verified : false, decidedBy },
+      ok ? 'success' : result.status === 'unknown' ? 'unknown' : 'error');
   }
-  return { executed: true, result };
+  return { executed: result.status === 'success', result };
 }
 
 export async function rejectAction(userId: string, actionId: string, decidedBy?: string, reason?: string) {

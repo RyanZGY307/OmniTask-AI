@@ -9,6 +9,8 @@
 import { prisma } from '../services/db';
 import { getSecret } from './vault';
 import { ExecutionResult } from './types';
+import { R } from './contract';
+import type { ConnectorResult } from './connectors/base';
 
 const GITHUB_API = process.env.GITHUB_API_BASE || 'https://api.github.com';
 
@@ -78,12 +80,10 @@ export type ToolContext = {
   repo: string;
 };
 
-export type ToolResult = {
-  ok: boolean;
-  verified: boolean;
-  data?: any;
-  error?: string;
-};
+// P0-1: ToolResult 不再自造 ok/verified/error 三字段旧形状 —— 那正是
+// 「成功带 error」「失败被吞成成功」的类型根源。统一改用 contract.ts 的
+// ConnectorResult 判别联合（成功分支无 error，失败分支必带 error）。
+export type ToolResult = ConnectorResult;
 
 export const GITHUB_TOOLS: Record<string, {
   description: string;
@@ -100,8 +100,8 @@ export const GITHUB_TOOLS: Record<string, {
     async execute(ctx, args) {
       const path = args?.path ? `/contents/${args.path}` : '';
       const r = await ghFetch(ctx.token, 'GET', `/repos/${ctx.owner}/${ctx.repo}${path}`);
-      if (!r.ok) return { ok: false, verified: false, error: `HTTP ${r.status}: ${r.body?.message}` };
-      return { ok: true, verified: true, data: r.body };
+      if (!r.ok) return R.fail(`HTTP ${r.status}: ${r.body?.message}`);
+      return R.success(r.body, true);
     },
   },
   'github.issue.read': {
@@ -111,8 +111,8 @@ export const GITHUB_TOOLS: Record<string, {
     readOnly: true,
     async execute(ctx, args) {
       const r = await ghFetch(ctx.token, 'GET', `/repos/${ctx.owner}/${ctx.repo}/issues?per_page=${args?.perPage || 30}&state=${args?.state || 'all'}`);
-      if (!r.ok) return { ok: false, verified: false, error: `HTTP ${r.status}: ${r.body?.message}` };
-      return { ok: true, verified: true, data: r.body };
+      if (!r.ok) return R.fail(`HTTP ${r.status}: ${r.body?.message}`);
+      return R.success(r.body, true);
     },
   },
   'github.issue.create': {
@@ -121,14 +121,14 @@ export const GITHUB_TOOLS: Record<string, {
     riskLevel: 'R1',
     readOnly: false,
     async execute(ctx, args) {
-      if (!args?.title) return { ok: false, verified: false, error: 'title is required' };
+      if (!args?.title) return R.fail('title is required');
       const r = await ghFetch(ctx.token, 'POST', `/repos/${ctx.owner}/${ctx.repo}/issues`, {
         title: args.title, body: args.body || '', labels: args.labels || [],
       });
-      if (!r.ok) return { ok: false, verified: false, error: `HTTP ${r.status}: ${r.body?.message}` };
+      if (!r.ok) return R.fail(`HTTP ${r.status}: ${r.body?.message}`);
       const created = await ghFetch(ctx.token, 'GET', `/repos/${ctx.owner}/${ctx.repo}/issues/${r.body.number}`);
       const verified = created.ok && created.body?.state === 'open';
-      return { ok: true, verified, data: verified ? { number: created.body.number, title: created.body.title, state: created.body.state } : { number: r.body.number } };
+      return R.success(verified ? { number: created.body.number, title: created.body.title, state: created.body.state } : { number: r.body.number }, verified);
     },
   },
   'github.pr.read': {
@@ -138,8 +138,8 @@ export const GITHUB_TOOLS: Record<string, {
     readOnly: true,
     async execute(ctx, args) {
       const r = await ghFetch(ctx.token, 'GET', `/repos/${ctx.owner}/${ctx.repo}/pulls?per_page=${args?.perPage || 20}&state=${args?.state || 'open'}`);
-      if (!r.ok) return { ok: false, verified: false, error: `HTTP ${r.status}: ${r.body?.message}` };
-      return { ok: true, verified: true, data: r.body };
+      if (!r.ok) return R.fail(`HTTP ${r.status}: ${r.body?.message}`);
+      return R.success(r.body, true);
     },
   },
   'github.pr.create': {
@@ -149,15 +149,15 @@ export const GITHUB_TOOLS: Record<string, {
     readOnly: false,
     async execute(ctx, args) {
       if (!args?.title || !args?.head || !args?.base) {
-        return { ok: false, verified: false, error: 'title, head and base are required' };
+        return R.fail('title, head and base are required');
       }
       const r = await ghFetch(ctx.token, 'POST', `/repos/${ctx.owner}/${ctx.repo}/pulls`, {
         title: args.title, head: args.head, base: args.base, body: args.body || '',
       });
-      if (!r.ok) return { ok: false, verified: false, error: `HTTP ${r.status}: ${r.body?.message}` };
+      if (!r.ok) return R.fail(`HTTP ${r.status}: ${r.body?.message}`);
       const created = await ghFetch(ctx.token, 'GET', `/repos/${ctx.owner}/${ctx.repo}/pulls/${r.body.number}`);
       const verified = created.ok && created.body?.state === 'open';
-      return { ok: true, verified, data: verified ? { number: created.body.number, title: created.body.title, state: created.body.state, url: created.body.html_url } : { number: r.body.number } };
+      return R.success(verified ? { number: created.body.number, title: created.body.title, state: created.body.state, url: created.body.html_url } : { number: r.body.number }, verified);
     },
   },
   'github.branch.list': {
@@ -167,8 +167,8 @@ export const GITHUB_TOOLS: Record<string, {
     readOnly: true,
     async execute(ctx, args) {
       const r = await ghFetch(ctx.token, 'GET', `/repos/${ctx.owner}/${ctx.repo}/branches?per_page=${args?.perPage || 30}`);
-      if (!r.ok) return { ok: false, verified: false, error: `HTTP ${r.status}: ${r.body?.message}` };
-      return { ok: true, verified: true, data: (r.body || []).map((b: any) => b.name) };
+      if (!r.ok) return R.fail(`HTTP ${r.status}: ${r.body?.message}`);
+      return R.success((r.body || []).map((b: any) => b.name), true);
     },
   },
   'github.commit.read': {
@@ -177,10 +177,10 @@ export const GITHUB_TOOLS: Record<string, {
     riskLevel: 'R0',
     readOnly: true,
     async execute(ctx, args) {
-      if (!args?.sha) return { ok: false, verified: false, error: 'sha is required' };
+      if (!args?.sha) return R.fail('sha is required');
       const r = await ghFetch(ctx.token, 'GET', `/repos/${ctx.owner}/${ctx.repo}/commits/${args.sha}`);
-      if (!r.ok) return { ok: false, verified: false, error: `HTTP ${r.status}: ${r.body?.message}` };
-      return { ok: true, verified: true, data: { sha: r.body.sha, message: r.body?.commit?.message, author: r.body?.commit?.author } };
+      if (!r.ok) return R.fail(`HTTP ${r.status}: ${r.body?.message}`);
+      return R.success({ sha: r.body.sha, message: r.body?.commit?.message, author: r.body?.commit?.author }, true);
     },
   },
   'github.actions.read': {
@@ -190,8 +190,8 @@ export const GITHUB_TOOLS: Record<string, {
     readOnly: true,
     async execute(ctx, args) {
       const r = await ghFetch(ctx.token, 'GET', `/repos/${ctx.owner}/${ctx.repo}/actions/runs?per_page=${args?.perPage || 20}`);
-      if (!r.ok) return { ok: false, verified: false, error: `HTTP ${r.status}: ${r.body?.message}` };
-      return { ok: true, verified: true, data: (r.body?.workflow_runs || []).map((w: any) => ({ id: w.id, name: w.name, status: w.status, conclusion: w.conclusion })) };
+      if (!r.ok) return R.fail(`HTTP ${r.status}: ${r.body?.message}`);
+      return R.success((r.body?.workflow_runs || []).map((w: any) => ({ id: w.id, name: w.name, status: w.status, conclusion: w.conclusion })), true);
     },
   },
 };
@@ -205,23 +205,23 @@ export async function executeGitHubTool(params: {
   userId: string;
   toolId: string;
   args?: any;
-}): Promise<ToolResult & { credentialMissing?: boolean; authError?: 'expired' | 'revoked' }> {
+}): Promise<ConnectorResult> {
   const { connectionId, userId, toolId, args } = params;
   const tool = GITHUB_TOOLS[toolId];
-  if (!tool) return { ok: false, verified: false, error: `Unknown tool: ${toolId}` };
+  if (!tool) return R.fail(`Unknown tool: ${toolId}`);
 
   const conn = await prisma.connection.findFirst({ where: { id: connectionId, userId } });
-  if (!conn) return { ok: false, verified: false, error: 'Connection not found' };
-  if (!conn.credentialRef) return { ok: false, verified: false, error: 'No credential attached', credentialMissing: true };
+  if (!conn) return R.fail('Connection not found');
+  if (!conn.credentialRef) return R.fail('No credential attached', { credentialMissing: true });
 
   const token = await getSecret(conn.credentialRef, userId);
   if (!token) {
     await prisma.connection.update({ where: { id: conn.id }, data: { status: 'reauth_required' } });
-    return { ok: false, verified: false, error: 'Credential expired or revoked', credentialMissing: true };
+    return R.fail('Credential expired or revoked', { credentialMissing: true });
   }
 
   if (!conn.owner || !conn.repo) {
-    return { ok: false, verified: false, error: 'Connection has no repository bound. Set owner/repo first.' };
+    return R.fail('Connection has no repository bound. Set owner/repo first.');
   }
 
   try {
@@ -232,8 +232,8 @@ export async function executeGitHubTool(params: {
         where: { id: conn.id },
         data: { status: err.kind === 'revoked' ? 'revoked' : 'expired' },
       });
-      return { ok: false, verified: false, error: `GitHub auth ${err.kind}`, authError: err.kind };
+      return R.fail(`GitHub auth ${err.kind}`, { authError: err.kind });
     }
-    return { ok: false, verified: false, error: err.message };
+    return R.fail(err.message);
   }
 }

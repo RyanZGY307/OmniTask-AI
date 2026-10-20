@@ -6,7 +6,8 @@
 // LinkedIn, Instagram, TikTok, Shopify, Stripe, and 30+ others.
 
 import crypto from 'crypto';
-import { BaseConnector, ConnectorContext, ConnectorResult } from './base';
+import { BaseConnector, ConnectorContext, ConnectorResult, HealthResult } from './base';
+import { R, healthy, degraded, unhealthy, healthUnknown } from '../contract';
 import { encryptSecret, storeCredential, revokeCredential, getSecret } from '../vault';
 import { prisma } from '../../services/db';
 import { PROVIDER_BASE_URLS } from '../../config';
@@ -236,7 +237,7 @@ export class OAuthConnector extends BaseConnector {
 
     // Delegate to provider-specific handler
     const handler = this.getHandler(toolId);
-    if (!handler) return { ok: false, verified: false, error: `Unknown tool: ${toolId}` };
+    if (!handler) return R.fail(`Unknown tool: ${toolId}`);
     return handler(token, args);
   }
 
@@ -267,17 +268,17 @@ export class OAuthConnector extends BaseConnector {
     await prisma.connection.update({ where: { id: ctx.connectionId }, data: { status: 'revoked' } });
   }
 
-  async healthCheck(ctx: ConnectorContext): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  async healthCheck(ctx: ConnectorContext): Promise<HealthResult> {
     const start = Date.now();
     try {
       const token = await this.getToken(ctx.userId, ctx.connectionId);
       // Quick ping to provider API
       const res = await fetch('https://api.github.com/rate_limit', { headers: { Authorization: `Bearer ${token}` } });
       const latency = Date.now() - start;
-      if (!res.ok) return { ok: false, latencyMs: latency, error: `HTTP ${res.status}` };
-      return { ok: true, latencyMs: latency, error: 'OAuth health check passed' };
+      if (!res.ok) return unhealthy(`HTTP ${res.status}`);
+      return healthy(latency);
     } catch (err: any) {
-      return { ok: false, error: err.message };
+      return unhealthy(err.message);
     }
   }
 }
