@@ -237,24 +237,72 @@ export async function approveAction(
     return { executed: false, error: `Action already ${action.status}` };
   }
   if (Date.now() - action.createdAt.getTime() > ACTION_TTL_MS) {
-    await prisma.actionRequest.update({ where: { id: action.id }, data: { status: 'expired' } });
+    // P1-c: 用 updateMany + status:'pending' 作为条件做原子 CAS。
+    // 旧版的先查后写没有原子性：两个并发的 approve 请求都能读到
+    // status==='pending'，随后都执行 —— 同一授权被执行两遍。
+    // 这里只有真正把状态从 pending 推走的那个请求能继续。
+    const claimed = await prisma.actionRequest.updateMany({
+      where: { id: action.id, status: 'pending' },
+      data: { status: 'expired' },
+    });
+    if (claimed.count === 0) {
+      return { executed: false, error: 'Action already handled by another request' };
+    }
     return { executed: false, error: 'Action expired' };
   }
 
   const conn = await prisma.connection.findFirst({ where: { id: action.connectionId, userId } });
+  // P1-a: 旧版在此直接读 conn.permissions —— 若连接在请求创建后已被删除，
+  // conn 为 undefined，这里抛 TypeError，用户看到的是 500 而非可理解的原因。
+  if (!conn) {
+    await prisma.actionRequest.update({ where: { id: action.id }, data: { status: 'failed', decidedBy, result: JSON.stringify({ status: 'failure', error: 'Connection no longer exists' }) } });
+    return { executed: false, error: 'Connection no longer exists' };
+  }
   const check = await checkPermission({
     userId,
     riskLevel: action.riskLevel as RiskLevel,
     requiredCapability: requiredCapabilityForTool(action.toolId),
     connection: { ...conn, permissions: JSON.parse(conn.permissions || '[]'), scopes: JSON.parse(conn.scopes || '[]') } as any,
   });
-  if (check.decision === 'deny') {
-    await prisma.actionRequest.update({ where: { id: action.id }, data: { status: 'rejected', decidedBy } });
-    return { executed: false, error: check.reason || 'Now denied by policy' };
+  // P1-b: 旧版只拦 deny。若等待期间策略从 never 改成 confirm，会直接执行，
+  // 把"需要再次确认"降级成"已获批准"，优先级倒挂。confirm 一律回绝，
+  // 让用户在新策略下重新发起。
+  if (check.decision !== 'allow') {
+    const reason = check.decision === 'deny'
+      ? (check.reason || 'Now denied by policy')
+      : 'Policy changed — this action now requires a fresh confirmation';
+    await prisma.actionRequest.update({ where: { id: action.id }, data: { status: 'rejected', decidedBy, result: JSON.stringify({ denied: true, reason }) } });
+    return { executed: false, error: reason };
   }
 
   const preview = JSON.parse(action.preview || '{}');
-  const result = await executeAction(action.connectionId!, userId, action.toolId, preview.args);
+  // P1-c: 执行前原子抢占。把 status 从 pending 改为 'approved_claimed' 这一
+  // 中间态：只有 CAS 成功的那个请求才会真正调用连接器。旧版在权限检查通过后
+  // 就直接 executeAction，两个并发批准会各自执行一次外部副作用（发消息、
+  // 写仓库），且 update 无条件写入会把先完成的结果覆盖掉。
+  const claim = await prisma.actionRequest.updateMany({
+    where: { id: action.id, status: 'pending' },
+    data: { status: 'approved', decidedBy },
+  });
+  if (claim.count === 0) {
+    return { executed: false, error: 'Action already handled by another request' };
+  }
+  try {
+    return await executeApproved(action, preview.args, decidedBy);
+  } catch (err: any) {
+    // 执行本身抛错（而非返回失败结果）时也要留下终态，否则会永远停在 approved。
+    const result = R.fail(err?.message || String(err));
+    await prisma.actionRequest.update({
+      where: { id: action.id },
+      data: { status: 'failed', result: JSON.stringify({ status: result.status, error: (result as any).error }) },
+    });
+    throw err;
+  }
+}
+
+/** 已被原子抢占的 ActionRequest 的实际执行与结果持久化。 */
+async function executeApproved(action: any, args: any, decidedBy?: string) {
+  const result = await executeAction(action.connectionId!, action.userId, action.toolId, args);
   // P0-1: 旧版一律写成 `result.ok ? 'executed' : 'failed'`，把「结果未知」和
   // 「能力未实现」也压成明确失败 —— 上层无法知道该重试还是该人工介入。
   // ActionRequest.status 枚举本来就有 waiting_auth / verifying，这里如实分流。
@@ -279,7 +327,7 @@ export async function approveAction(
   if (action.traceId) {
     const ok = result.status === 'success';
     await addEvent(action.traceId, 'APPROVAL',
-      { actionId, status: result.status, verified: ok ? !!(result as any).verified : false, decidedBy },
+      { actionId: action.id, status: result.status, verified: ok ? !!(result as any).verified : false, decidedBy },
       ok ? 'success' : result.status === 'unknown' ? 'unknown' : 'error');
   }
   return { executed: result.status === 'success', result };
