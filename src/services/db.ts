@@ -417,6 +417,74 @@ addRetryMiddleware(prismaKnowledge, 'knowledge');
 addRetryMiddleware(prismaOverflow, 'overflow');
 
 // ================================================================
+// Message.seq 自动分配（conversation 库）
+// ================================================================
+// 对话记忆管理（压缩截止位置、"不误删压缩期间产生的新消息"）需要对话内单调
+// 且唯一的序号。Message 原本只有 createdAt 与 cuid，cuid 非单调，故新增 seq
+// 字段并由迁移回填历史行。
+//
+// 为什么在这里统一分配，而不是在每个 message.create 调用点写：
+//   chat.ts 里有 14 处 message.create（媒体确认卡/音频卡/Office 卡/用户消息/
+//   助手消息……）。逐处写既容易漏，也会让"序号分配规则"分散在 14 个地方 ——
+//   本次任务要消除的正是这类不一致。
+//
+// 失败开放（fail-open）而非失败关闭：seq 分配不出去时仍然写入消息。
+// 理由：丢一条用户消息是不可逆的真实损失；seq 缺失只让该对话暂时失去压缩
+// 能力（buildModelContext 检测到 seq 不可用会降级，行为与接入前一致），
+// 等迁移 backfill 即可恢复。两害相权，绝不牺牲消息保存。
+// ================================================================
+
+const SEQ_MAX_ALLOC_ATTEMPTS = 4;
+
+function addMessageSeqMiddleware(client: ConversationPrismaClient) {
+  const useFn = (client as any).$use;
+  if (typeof useFn !== 'function') return;
+  useFn.call(
+    client,
+    async (params: any, next: any) => {
+      if (params.model !== 'Message' || params.action !== 'create') {
+        return next(params);
+      }
+      const data = params.args?.data;
+      // 调用方显式给了 seq 就尊重它（迁移回填/管理脚本用）
+      if (!data || typeof data !== 'object' || typeof data.seq === 'number') {
+        return next(params);
+      }
+      const conversationId: string | undefined =
+        typeof data.conversationId === 'string' ? data.conversationId : undefined;
+      if (!conversationId) return next(params);   // 无对话归属：无从分配
+
+      for (let attempt = 1; attempt <= SEQ_MAX_ALLOC_ATTEMPTS; attempt++) {
+        // 取该对话当前最大序号。这不是事务，两个并发请求可能拿到同值；
+        // 唯一索引把后一个撞成 P2002，由下面的重试分支递增重读。
+        const last = await (client as any).message.findFirst({
+          where: { conversationId },
+          orderBy: { seq: 'desc' },
+          select: { seq: true },
+        });
+        const nextSeq = (last?.seq ?? 0) + attempt;
+        data.seq = nextSeq;
+        try {
+          return await next(params);
+        } catch (err: any) {
+          // 唯一约束冲突 = 并发撞号：重读并递增
+          if (err?.code === 'P2002' && attempt < SEQ_MAX_ALLOC_ATTEMPTS) {
+            console.warn(`[DB:conversation] Message.seq 冲突 (${nextSeq})，重试 ${attempt}/${SEQ_MAX_ALLOC_ATTEMPTS}`);
+            continue;
+          }
+          // 重试用尽仍冲突：清掉 seq，让消息本身仍能写入（失败开放）
+          if (err?.code === 'P2002') delete data.seq;
+          throw err;
+        }
+      }
+      return next(params);
+    },
+  );
+}
+
+addMessageSeqMiddleware(prismaConversation);
+
+// ================================================================
 // Generic retry helper
 // ================================================================
 

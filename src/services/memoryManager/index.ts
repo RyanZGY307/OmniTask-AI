@@ -102,6 +102,14 @@ export interface BuildContextInput {
   multimodal?: string;
   /** 用户当前选择的模型（contextWindow/maxTokens 来源） */
   modelKey: string;
+  /**
+   * 调用方传入的历史兜底。用途只有两个：
+   *   1. 新对话（conversationId 为空/'new'）没有库内历史，用它兜底；
+   *   2. 库内历史不可用时（如 seq 未回填）的降级来源。
+   * 有真实 conversationId 且 seq 可用时，库内历史优先 —— 调用方原先那套
+   * 硬编码 slice(-20) / 全量展开不再决定上下文，这正是接入要消除的不一致。
+   */
+  fallbackHistory?: Array<{ role: string; content: string }>;
   /** 是否自动触发上下文压缩（后台异步，不阻塞本次请求） */
   autoTrigger?: boolean;
 }
@@ -118,6 +126,10 @@ export interface BuiltContext {
   compressionTriggered: boolean;
   /** 触发的任务 id（若有） */
   taskId?: string;
+  /** 历史来源：db=库内权威；fallback=调用方兜底（新对话或 seq 不可用） */
+  historySource: 'db' | 'fallback';
+  /** 该对话当前是否已有活动压缩任务（前端状态提示用） */
+  activeCompressionTaskId?: string | null;
 }
 
 /**
@@ -145,17 +157,40 @@ export async function buildModelContext(input: BuildContextInput): Promise<Built
   const cfg = resolveBudgetConfig();
   const capacity = modelCapacityFor(input.modelKey);
 
-  // 1) 摘要 + 未被覆盖的原始历史
-  const summaryRow = await prismaConversation.conversationSummary.findUnique({
-    where: { conversationId: input.conversationId },
-  }).catch(() => null);
+  // 新对话没有库内历史（conversationId 未落库）：走调用方兜底，不建压缩任务
+  const isRealConversation = !!input.conversationId && input.conversationId !== 'new';
 
-  const coveredTo = summaryRow?.coveredToSeq ?? 0;
-  const raw = await prismaConversation.message.findMany({
-    where: { conversationId: input.conversationId, seq: { gt: coveredTo } },
-    orderBy: { seq: 'asc' },
-    select: { seq: true, role: true, content: true, messageType: true },
-  });
+  let summaryRow: any = null;
+  let raw: Array<{ seq: number | null; role: string; content: string; messageType: string }> = [];
+  let historySource: 'db' | 'fallback' = 'fallback';
+
+  if (isRealConversation) {
+    summaryRow = await prismaConversation.conversationSummary.findUnique({
+      where: { conversationId: input.conversationId },
+    }).catch(() => null);
+
+    const covered = summaryRow?.coveredToSeq ?? 0;
+    const rows = await prismaConversation.message.findMany({
+      where: { conversationId: input.conversationId, seq: { gt: covered } },
+      orderBy: { seq: 'asc' },
+      select: { seq: true, role: true, content: true, messageType: true },
+    }).catch(() => [] as any[]);
+
+    // seq 可用性判定：迁移未回填的老数据可能全为 null。不可用时**不**用库内
+    // 历史发起压缩（范围边界不可靠，误删代价不可逆），降级到调用方历史 ——
+    // 行为与接入前一致，绝不因新功能让 Chat 挂掉。
+    const seqUsable = rows.length === 0 || rows.every((r: any) => typeof r.seq === 'number' && r.seq > 0);
+    if (seqUsable) {
+      raw = rows as any;
+      historySource = 'db';
+    }
+  }
+
+  if (historySource === 'fallback') {
+    // 兜底历史只做预算计算与裁剪，**不触发压缩、不删除任何消息**
+    const fallback = input.fallbackHistory ?? [];
+    raw = fallback.map((h, i) => ({ seq: i + 1, role: h.role, content: h.content, messageType: 'text' }));
+  }
 
   const parts: ContextPart = {
     systemPrompt: input.systemPrompt,
@@ -172,13 +207,16 @@ export async function buildModelContext(input: BuildContextInput): Promise<Built
   };
   const budget = computeInputBudget(capacity, parts, cfg);
 
-  // 2) 触发判定：达到 85% 且尚无同对话活动任务
+  // 2a) 已有活动任务时要提示前端（压缩进行中也显示固定文案）
+  const activeTask = isRealConversation && historySource === 'db'
+    ? await getActiveCompressionTask(input.conversationId).catch(() => null)
+    : null;
+
+  // 2b) 触发判定：达到 85% 且尚无同对话活动任务，且删除/冻结边界可靠
   let taskId: string | undefined;
-  if (input.autoTrigger !== false && budget?.shouldTrigger) {
-    const startSeq = raw.length ? (raw[0].seq ?? 0) : 0;
-    const endSeq = raw.length ? (raw[raw.length - 1].seq ?? 0) : 0;
-    // seq 尚未回填（迁移前的老数据）时不发起压缩：范围边界不可靠，
-    // 绝不能在没有可靠序号的情况下猜一个范围去删消息。
+  if (input.autoTrigger !== false && budget?.shouldTrigger && historySource === 'db' && !activeTask && raw.length > 0) {
+    const startSeq = raw[0].seq ?? 0;
+    const endSeq = raw[raw.length - 1].seq ?? 0;
     if (startSeq > 0 && endSeq >= startSeq) {
       taskId = (await enqueueIfIdle(input.conversationId, input.userId, 'context_85', startSeq, endSeq, input.modelKey)) ?? undefined;
     }
@@ -204,6 +242,8 @@ export async function buildModelContext(input: BuildContextInput): Promise<Built
     history = raw.slice(raw.length - keep);
   }
 
+  const coveredTo = summaryRow?.coveredToSeq ?? 0;
+
   const messages: Array<{ role: string; content: string }> = [];
   if (input.systemPrompt) messages.push({ role: 'system', content: input.systemPrompt });
   if (summary) {
@@ -219,6 +259,8 @@ export async function buildModelContext(input: BuildContextInput): Promise<Built
     budget,
     compressionTriggered: !!taskId,
     taskId,
+    historySource,
+    activeCompressionTaskId: activeTask?.id ?? null,
   };
 }
 
