@@ -56,6 +56,9 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String
   content        String
+  // 对话内单调序号（对话记忆管理的事实依据）：压缩截止位置、
+  // "不误删压缩期间新消息"都依赖它。历史行由迁移回填（幂等）。
+  seq            Int?
   messageType    String       @default("text")
   model          String?
   mode           String?
@@ -95,4 +98,77 @@ model FlaggedConversation {
   @@index([userId, createdAt])
   @@index([conversationId])
   @@index([retentionUntil])
+}
+
+// ================================================================
+// 对话记忆管理系统（context compression）
+// 迁移见 migrations-conversation.sql（幂等 DDL）。
+// 三张表的语义边界：
+//   ConversationSummary     —— 已提交的累积摘要（版本化，每对话一条）
+//   ContextCompressionTask  —— 压缩任务（冻结范围 + 乐观锁 + 状态机）
+//   CompressionSegment      —— 分段中间结果（可恢复、幂等）
+// ================================================================
+
+model ConversationSummary {
+  id             String   @id @default(cuid())
+  conversationId String   @unique
+  userId         String
+  content        String
+  coveredToSeq   Int      @default(0)
+  coveredFromSeq Int      @default(1)
+  version        Int      @default(1)
+  modelId        String?
+  structured     String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model ContextCompressionTask {
+  id                 String   @id @default(cuid())
+  conversationId     String
+  userId             String
+  triggerReason      String
+  sourceStartSeq     Int
+  sourceEndSeq       Int
+  baseSummaryVersion Int      @default(0)
+  status             String   @default("PENDING")
+  modelId            String?
+  segmentCount       Int      @default(0)
+  segmentsDone       Int      @default(0)
+  mergeLevel         Int      @default(0)
+  inputTokens        Int      @default(0)
+  outputTokens       Int      @default(0)
+  startedAt          DateTime?
+  completedAt        DateTime?
+  errorDetails       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([conversationId, status])
+  @@index([userId, createdAt])
+}
+
+model CompressionSegment {
+  id              String   @id @default(cuid())
+  taskId          String
+  conversationId  String
+  segmentIndex    Int
+  sourceStartSeq  Int
+  sourceEndSeq    Int
+  level           String   @default("SEGMENT")
+  parentSegmentId String?
+  content         String
+  status          String   @default("PENDING")
+  modelId         String?
+  inputTokens     Int      @default(0)
+  outputTokens    Int      @default(0)
+  retryCount      Int      @default(0)
+  errorDetails    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([taskId, segmentIndex])
+  @@index([taskId, status])
 }
