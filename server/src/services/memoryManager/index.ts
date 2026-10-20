@@ -57,13 +57,10 @@ export function resolveStorageConfig(): StorageCompressionConfig {
 export type TriggerReason = 'storage' | 'context_85' | 'manual';
 
 export type TaskStatus =
-  | 'PENDING' | 'SEGMENTING' | 'SEGMENT_DONE' | 'MERGING'
-  | 'VERIFYING' | 'COMMITTING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  | 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
 /** 活动状态集合：前端提示"正在压缩上下文，可继续对话"只对这些状态显示 */
-export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
-  'PENDING', 'SEGMENTING', 'SEGMENT_DONE', 'MERGING', 'VERIFYING', 'COMMITTING',
-];
+export const ACTIVE_TASK_STATUSES: TaskStatus[] = ['PENDING', 'RUNNING'];
 
 export const COMPRESSION_STATUS_TEXT = '正在压缩上下文，可继续对话';
 
@@ -561,7 +558,7 @@ export async function runCompressionTask(taskId: string): Promise<RunTaskResult>
     }));
 
     // ---- 4) 分段 ----
-    await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { status: 'SEGMENTING', startedAt: new Date() } });
+    await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { status: 'RUNNING', startedAt: new Date() } });
     const plan = planSegments(segMessages, callBudget.segmentInputBudget);
 
     // 复用已验证的中间结果（任务书 5.10）：范围与模型一致才复用
@@ -601,7 +598,7 @@ export async function runCompressionTask(taskId: string): Promise<RunTaskResult>
       });
     }
 
-    await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { status: 'SEGMENT_DONE' } });
+    await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { segmentsDone: completed } });
 
     // ---- 6) 分层合并 ----
     let mergeLevel = 0;
@@ -634,7 +631,7 @@ export async function runCompressionTask(taskId: string): Promise<RunTaskResult>
           level++;
         }
         contents = next;
-        await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { mergeLevel: level, status: 'MERGING' } });
+        await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { mergeLevel: level } });
         // 防止无限合并：真实历史不可能需要 12 层（见 mergeDepthEstimate 上限）
         if (level >= 12) {
           throw new Error('合并层级超过 12（疑似无限合并），已中止；原始消息未动，分段结果保留可恢复');
@@ -645,7 +642,7 @@ export async function runCompressionTask(taskId: string): Promise<RunTaskResult>
     }
 
     // ---- 7) 验证 ----
-    await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { status: 'VERIFYING' } });
+    await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { outputTokens } });
     const parsed = parseSummaryOrThrow(finalText, `task ${taskId}`);
     const coversAll = parsed.coverage
       ? parsed.coverage.from_seq <= task.sourceStartSeq && parsed.coverage.to_seq >= task.sourceEndSeq
@@ -653,7 +650,7 @@ export async function runCompressionTask(taskId: string): Promise<RunTaskResult>
     if (!finalText || finalText.length < 4) throw new Error('最终摘要为空');
 
     // ---- 8) 原子提交：乐观锁 base_summary_version ----
-    await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { status: 'COMMITTING' } });
+    await prismaConversation.contextCompressionTask.update({ where: { id: taskId }, data: { outputTokens } });
     const current = await prismaConversation.conversationSummary.findUnique({ where: { conversationId: task.conversationId } });
     const currentVersion = current?.version ?? 0;
     if (currentVersion !== task.baseSummaryVersion) {
