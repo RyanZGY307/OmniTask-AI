@@ -170,6 +170,46 @@ const FINAL_OK = JSON.stringify({
     check('压缩用独立内部提示词（§8.2）', /SEGMENT_SYSTEM = /.test(clean) && /MERGE_SYSTEM = /.test(clean));
   }
 
+  S('10. 多模态预算护栏（潜伏缺陷：当前无多模态输入路径，但账必须已算对）');
+  {
+    // 本次核实结论（如实记录，不夸大）：
+    //   · ContextPart.multimodal 字段存在，且已正确计入 estimateContextTokens
+    //     的 breakdown 与 total —— 账目路径是对的。
+    //   · 但当前全仓库 messageType 实际取值只有 'text' 与 'media_confirm'，
+    //     chat.ts 中 imageUrl/fileUrl/files/attachment 均 0 命中，
+    //     buildModelContext 调用点也未传 multimodal。
+    //   · 因此"85% 触发低估"目前不是活缺陷（没有图片 Token 会进上下文），
+    //     而是潜伏缺陷：一旦接入图片输入而忘记填充该字段，会漏算。
+    // 本组断言把上面的结论固定下来，让"接入时忘记"立刻失败。
+    const { estimateContextTokens } = require('../src/services/memoryManager/tokens');
+    const base = { systemPrompt: 'x'.repeat(400), historyMessages: 'y'.repeat(400) };
+    const b0 = estimateContextTokens(base);
+    const b1 = estimateContextTokens({ ...base, multimodal: 'z'.repeat(4000) });
+
+    check('multimodal 非空时 total 随之增加（账已算入）', b1.total > b0.total);
+    check('multimodal 计入 breakdown 明细（可观测）', b1.breakdown.multimodal > 0);
+    check('multimodal 空字符串不产生幻觉 token', estimateContextTokens({ ...base, multimodal: '' }).total === b0.total);
+    check('multimodal 单独占位时 total 为 0', estimateContextTokens({ multimodal: '' }).total === 0);
+    check('多模态字段不会被误当成正文长度忽略',
+      b1.breakdown.multimodal === estimateContextTokens({ multimodal: 'z'.repeat(4000) }).breakdown.multimodal);
+
+    const { readFileSync } = require('fs');
+    const chatClean = readFileSync('src/routes/chat.ts', 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const idxClean = readFileSync('src/services/memoryManager/index.ts', 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    // 当前状态：未填充。此断言用于提醒——将来若出现图片输入路径而这里仍为空，
+    // 应先填充 multimodal 再放开，否则 85% 阈值会系统性低估。
+    check('（当前事实）chat.ts 未传 multimodal：尚无图片输入路径',
+      !/multimodal:/.test(chatClean));
+    check('（当前事实）buildModelContext 未接收 multimodal 参数',
+      !/multimodal/.test(idxClean.split('export async function buildModelContext')[1]?.slice(0, 600) || ''));
+    check('预留字段已在 ContextPart 中定义（接入成本仅一处）',
+      readFileSync('src/services/memoryManager/tokens.ts', 'utf-8').includes('multimodal?: string'));
+    console.log('    [说明] 后续若接入图片/视频输入：必须在 chat.ts 计算并传入');
+    console.log('           multimodal token（按模型 tile 规则保守估算），再放开上面两条"当前事实"断言。');
+  }
+
   console.log(`\n摘要与失败安全测试：${pass} 通过 / ${fail} 失败`);
   // 给 Prisma 的异步引擎加载留出崩溃时间，再退出
   setTimeout(() => process.exit(fail > 0 ? 1 : 0), 120);
