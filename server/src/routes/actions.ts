@@ -64,7 +64,21 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
       traceId: req.body?.traceId ? String(req.body.traceId) : undefined,
       requestedBy: req.body?.deviceId ? String(req.body.deviceId) : undefined,
     });
-    res.status(out.executed || out.status === 'pending' ? 201 : 200).json({ ...out, tool: toolView(toolId) });
+    // P0-1: 旧版对失败也返回 200（仅 executed:true → 201），调用方无法从
+    // HTTP 语义判断结果。现在按真实终态分流：成功/待审批 201，
+    // 明确失败/未实现 502（外部侧失败），结果未知 202（已收到但未确认），
+    // 需要授权 401（凭据失效需重新连接）。
+    const terminal = (out as any).resultStatus ?? (out.executed ? 'success' : out.status);
+    const code =
+      out.executed || out.status === 'pending' ? 201
+      : terminal === 'unknown' ? 202
+      : terminal === 'auth_required' ? 401
+      : 502;
+    res.status(code).json({
+      ...out,
+      tool: toolView(toolId),
+      ...(out.executed ? {} : { error: (out as any).reason ?? 'Action did not complete' }),
+    });
   } catch (err: any) {
     const status = err.message?.includes('Connection not found') || err.message?.includes('Unknown tool') ? 404 : 500;
     res.status(status).json({ error: err.message });
@@ -74,7 +88,11 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
 router.post('/:id/approve', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const out = await approveAction(req.user!.id, String(req.params.id), req.body?.deviceId ? String(req.body.deviceId) : undefined);
-    res.json(out);
+    // P0-1: approveAction 现按 ConnectorResult.status 分流持久化状态，
+    // 不再一律 executed:true。把真实状态映射到 HTTP 语义，便于前端与 Agent 判断。
+    const rs = (out as any).result?.status;
+    const code = out.executed ? 200 : rs === 'unknown' ? 202 : rs === 'auth_required' ? 401 : 502;
+    res.status(code).json(out);
   } catch (err: any) {
     res.status(err.message === 'Action not found' ? 404 : 500).json({ error: err.message });
   }

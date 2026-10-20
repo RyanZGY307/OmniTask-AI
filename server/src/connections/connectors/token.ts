@@ -12,7 +12,8 @@
 // returned in tool results); only redacted metadata is exposed.
 // ================================================================
 
-import { BaseConnector, ConnectorContext, ConnectorResult } from './base';
+import { BaseConnector, ConnectorContext, ConnectorResult, HealthResult } from './base';
+import { R, healthy, degraded, unhealthy, healthUnknown } from '../contract';
 import { getSecret, storeCredential, revokeCredential } from '../vault';
 import { prisma } from '../../services/db';
 import { PROVIDER_BASE_URLS } from '../../config';
@@ -149,15 +150,15 @@ export class TokenConnector extends BaseConnector {
       where: { id: ctx.connectionId, userId: ctx.userId },
       select: { credentialRef: true, providerId: true },
     });
-    if (!conn?.credentialRef) return { ok: false, verified: false, error: 'No token configured for this connection' };
+    if (!conn?.credentialRef) return R.fail('No token configured for this connection');
 
     const secret = await getSecret(conn.credentialRef, ctx.userId);
     const st = secret ? parseStored(secret) : null;
-    if (!st) return { ok: false, verified: false, error: 'Failed to decrypt stored token' };
+    if (!st) return R.fail('Failed to decrypt stored token');
 
     const baseUrl = st.baseUrl || args.baseUrl || PROVIDER_BASE_URLS[conn.providerId as keyof typeof PROVIDER_BASE_URLS] || '';
     const target = args.url || (baseUrl && args.path ? `${baseUrl.replace(/\/$/, '')}${args.path}` : baseUrl);
-    if (!target) return { ok: false, verified: false, error: 'No target URL (provide url or baseUrl+path)' };
+    if (!target) return R.fail('No target URL (provide url or baseUrl+path)');
 
     let url = target;
     const headers = buildHeaders(st, args.headers);
@@ -177,7 +178,7 @@ export class TokenConnector extends BaseConnector {
     try {
       res = await fetchTimeout(url, init);
     } catch (err: any) {
-      return { ok: false, verified: false, error: `Request failed: ${err?.message || err}` };
+      return R.fail(`Request failed: ${err?.message || err}`);
     }
 
     let bodyText = '';
@@ -194,17 +195,24 @@ export class TokenConnector extends BaseConnector {
     }
 
     // Never surface the token; expose status + a truncated body.
-    return {
-      ok: res.ok,
-      verified: res.ok,
-      data: {
-        status: res.status,
-        ok: res.ok,
-        body: parsed !== undefined ? parsed : bodyText.slice(0, MAX_BODY),
-        truncated: bodyText.length > MAX_BODY,
-      },
-      error: res.ok ? undefined : `HTTP ${res.status}`,
-    };
+    // 旧版把 res.ok 直接当作成功标志回传；但 HTTP 200 不等于业务成功。
+    // 这里保持 data 中的诊断字段，顶层状态改为 unknown 需要调用方结合
+    // 业务语义判断，避免把协议层成功误报为操作成功。
+    // 旧版把 res.ok 直接当作成功标志回传；但 HTTP 200 不等于业务成功，
+    // 且成功分支也带 error 字段。改为按协议结果分流，data 保留诊断字段。
+    return res.ok
+      ? R.success({
+          status: res.status,
+          ok: true,
+          body: parsed !== undefined ? parsed : bodyText.slice(0, MAX_BODY),
+          truncated: bodyText.length > MAX_BODY,
+        })
+      : R.fail(`HTTP ${res.status}`, {
+          status: res.status,
+          ok: false,
+          body: parsed !== undefined ? parsed : bodyText.slice(0, MAX_BODY),
+          truncated: bodyText.length > MAX_BODY,
+        });
   }
 
   async refresh(_ctx: ConnectorContext): Promise<void> {
@@ -217,20 +225,22 @@ export class TokenConnector extends BaseConnector {
     await prisma.connection.update({ where: { id: ctx.connectionId }, data: { status: 'revoked' } });
   }
 
-  async healthCheck(ctx: ConnectorContext): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  async healthCheck(ctx: ConnectorContext): Promise<HealthResult> {
     const conn = await prisma.connection.findFirst({ where: { id: ctx.connectionId, userId: ctx.userId }, select: { credentialRef: true, providerId: true } });
-    if (!conn?.credentialRef) return { ok: false, error: 'No token' };
+    if (!conn?.credentialRef) return unhealthy('No token');
     const secret = await getSecret(conn.credentialRef, ctx.userId);
     const st = secret ? parseStored(secret) : null;
-    if (!st) return { ok: false, error: 'Failed to decrypt token' };
+    if (!st) return unhealthy('Failed to decrypt token');
     const baseUrl = st.baseUrl || PROVIDER_BASE_URLS[conn.providerId as keyof typeof PROVIDER_BASE_URLS];
-    if (!baseUrl) return { ok: false, error: 'No endpoint for health check' };
+    if (!baseUrl) return unhealthy('No endpoint for health check');
     const start = Date.now();
     try {
       const res = await fetchTimeout(baseUrl, { method: 'GET', headers: buildHeaders(st) });
-      return { ok: res.ok, latencyMs: Date.now() - start, error: res.ok ? undefined : `HTTP ${res.status}` };
+      // 旧版成功时也返回一个 error 字段（值为 undefined），造成契约歧义。
+      const ms = Date.now() - start;
+      return res.ok ? healthy(ms) : unhealthy(`HTTP ${res.status}`);
     } catch (err: any) {
-      return { ok: false, error: err?.message };
+      return unhealthy(err?.message || String(err));
     }
   }
 }

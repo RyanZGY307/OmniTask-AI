@@ -5,7 +5,8 @@
 // Supports: OpenAI, Anthropic, Stripe, AWS, Google Cloud, Azure,
 // GitHub PAT, GitLab, Shopify, Discord, Slack, and 50+ others.
 
-import { BaseConnector, ConnectorContext, ConnectorResult } from './base';
+import { BaseConnector, ConnectorContext, ConnectorResult, HealthResult } from './base';
+import { R, fromLegacy, healthy, unhealthy } from '../contract';
 import { getSecret } from '../vault';
 import { prisma } from '../../services/db';
 import { PROVIDER_BASE_URLS } from '../../config';
@@ -55,26 +56,29 @@ export class ApiKeyConnector extends BaseConnector {
       where: { id: ctx.connectionId, userId: ctx.userId },
       select: { credentialRef: true, providerId: true },
     });
-    if (!conn) return { ok: false, verified: false, error: 'Connection not found' };
-    if (!conn.credentialRef) return { ok: false, verified: false, error: 'No API key configured' };
+    if (!conn) return R.fail('Connection not found');
+    if (!conn.credentialRef) return R.fail('No API key configured');
 
     const apiKey = await getSecret(conn.credentialRef, ctx.userId);
-    if (!apiKey) return { ok: false, verified: false, error: 'Failed to decrypt API key' };
+    if (!apiKey) return R.fail('Failed to decrypt API key');
 
     const providerId = conn.providerId;
     const baseUrl = PROVIDER_BASE_URLS[providerId as keyof typeof PROVIDER_BASE_URLS] || '';
 
     // Route to provider-specific handler
     const handler = this.getHandler(providerId, toolId);
-    if (!handler) return { ok: false, verified: false, error: `No handler for ${providerId}/${toolId}` };
+    if (!handler) return R.fail(`No handler for ${providerId}/${toolId}`);
 
     const start = Date.now();
     try {
       const result = await handler(apiKey, baseUrl, args);
-      const latency = Date.now() - start;
-      return { ok: true, verified: result.verified ?? true, data: result.data, error: result.error };
+      // 旧版这里写死 `ok: true` 并附带 `result.error`：handler 失败会被吞成
+      // 成功，成功时又带一个 error 字段（P0-1 反模式）。改为按 handler 的真实
+      // 结果转换，handler 的旧形状在此边界一次性归一。
+      void start;
+      return fromLegacy(result);
     } catch (err: any) {
-      return { ok: false, verified: false, error: err.message };
+      return R.fail(err.message);
     }
   }
 
@@ -89,22 +93,26 @@ export class ApiKeyConnector extends BaseConnector {
     await prisma.connection.update({ where: { id: ctx.connectionId }, data: { status: 'revoked' } });
   }
 
-  async healthCheck(ctx: ConnectorContext): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  async healthCheck(ctx: ConnectorContext): Promise<HealthResult> {
     const start = Date.now();
     try {
       const conn = await prisma.connection.findFirst({
         where: { id: ctx.connectionId, userId: ctx.userId },
         select: { credentialRef: true, providerId: true },
       });
-      if (!conn?.credentialRef) return { ok: false, error: 'No credential' };
+      if (!conn?.credentialRef) return unhealthy('No credential');
       const apiKey = await getSecret(conn.credentialRef, ctx.userId);
       const baseUrl = PROVIDER_BASE_URLS[conn.providerId as keyof typeof PROVIDER_BASE_URLS] || '';
       const handler = this.getHandler(conn.providerId, 'health');
-      if (!handler) return { ok: false, error: 'No health check handler' };
+      if (!handler) return unhealthy('No health check handler');
       const result = await handler(apiKey, baseUrl, {});
-      return { ok: result.ok, latencyMs: Date.now() - start, error: result.error };
+      // 旧版：`{ ok: result.ok, latencyMs, error: result.error }` —— 成功时也带
+      // error 字段。改为按真实结果分流，延迟仅由实测值产生。
+      return result.ok
+        ? healthy(Date.now() - start)
+        : unhealthy(result.error || 'Health check failed');
     } catch (err: any) {
-      return { ok: false, error: err.message };
+      return unhealthy(err.message);
     }
   }
 

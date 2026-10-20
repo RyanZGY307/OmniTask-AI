@@ -66,8 +66,13 @@ export async function verifyAction(ctx: VerificationContext): Promise<Verificati
   const { toolId, args, result } = ctx;
 
   // If action failed, verification fails
-  if (!result.ok) {
-    return { verified: false, status: 'failed', reason: `Action failed: ${result.error}`, checkedAt: new Date() };
+  // P0-1: 按 ConnectorResult 的判别联合判断，不再依赖 ok/error 单字段。
+  if (result.status !== 'success') {
+    const reason = result.status === 'unknown'
+      ? `Action outcome unknown: ${result.error}`
+      : `Action failed: ${result.error}`;
+    const status = result.status === 'unknown' ? 'unknown' : 'failed';
+    return { verified: false, status, reason, checkedAt: new Date() };
   }
 
   // Get postconditions for this tool
