@@ -275,6 +275,200 @@ export function planMergeGroups(items: GroupableItem[], groupBudgetTokens: numbe
   return groups;
 }
 
+// ================================================================
+// 单条消息本身超过压缩模型输入预算时的结构化分块（任务书 5.11）
+//
+// 触发条件不是"整段历史太长"，而是**单条**用户消息、助手消息、文件文本、
+// 代码块或工具返回结果本身就超过单次压缩请求能安全容纳的量。
+//
+// 优先顺序（严格按任务书 5.11 的 1→6）：
+//   1. 独立文件/附件 → 保留原始资源与稳定引用，解析为有顺序小块
+//   2. 长篇纯文本    → 按段落/标题/主题/语义边界分块
+//   3. 代码          → 按文件/类/函数/模块/语法结构划分，保留路径与位置
+//   4. 大型结构化结果 → 保留可验证关键字段、必要记录与原始结果引用
+//   5. 日志/重复内容  → 去重或提取主要错误与关键事件，但不删故障判断上下文
+//   6. 多模态         → 按项目实际能力处理（本处只保证不丢弃引用）
+//
+// 硬约束：
+//   - 必须维护原始消息 ID、片段序号、来源位置及重组关系
+//   - 分块之间保留足够信息使各片段可被正确理解
+//   - **不能只保留开头或结尾，不能直接删除整个消息**
+//   - 逐字准确还原的内容必须保留原文或可信引用，不只依赖模型摘要
+// ================================================================
+
+export interface OversizedChunk {
+  /** 原始消息的 seq（重组与溯源依据） */
+  sourceSeq: number;
+  /** 片段序号（1..N，同一条消息内唯一） */
+  chunkIndex: number;
+  /** 片段总数 */
+  chunkTotal: number;
+  /** 来源定位：字符区间 / 代码结构名 / 字段路径 */
+  sourceSpan: string;
+  /** 内容类型（决定采用哪种分块策略） */
+  kind: 'text' | 'code' | 'structured' | 'log' | 'multimodal' | 'unknown';
+  content: string;
+}
+
+/** 判定单条内容的结构类型（决定分块策略）。 */
+export function classifyContent(content: string): OversizedChunk['kind'] {
+  const head = content.slice(0, 400);
+  // 结构化：JSON / JSON 数组 / 明显表格
+  if (/^\s*[[{]/.test(content) && /["}\]\n]/.test(content.slice(-400))) {
+    try { JSON.parse(content); return 'structured'; } catch { /* not json */ }
+  }
+  // 代码：常见语法特征（import/function/class/def/#include/括号块）
+  if (/^\s*(import |from |require\(|function |class |def |const |let |var |#include|package )/m.test(content)
+      || /```/.test(content)) return 'code';
+  // 日志：时间戳 + 级别词
+  if (/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(content) && /\b(ERROR|WARN|INFO|DEBUG|error|warn)\b/.test(content)) return 'log';
+  // 多模态：本项目消息以文本承载，URL/路径引用视为需保留引用
+  if (/^\s*(https?:\/\/|\/)/.test(head) && content.length > 2000) return 'multimodal';
+  return 'text';
+}
+
+/** 按内容类型选择分块边界。返回的每个块都带来源定位。 */
+function splitByStructure(content: string, kind: OversizedChunk['kind'], budget: number): Array<{ span: string; text: string }> {
+  if (kind === 'code') {
+    // 3) 代码：按顶层结构（函数/类/export 块）划分，保留路径与位置信息
+    const lines = content.split('\n');
+    const units: Array<{ start: number; end: number }> = [];
+    let cur = 0;
+    for (let i = 1; i < lines.length; i++) {
+      if (/^(export\s+)?(async\s+)?(function|class|def|const|let|var)\s|^(class|def|#include|package)\s|^}\s*$/.test(lines[i])) {
+        units.push({ start: cur, end: i });
+        cur = i;
+      }
+    }
+    if (cur < lines.length) units.push({ start: cur, end: lines.length });
+    const out: Array<{ span: string; text: string }> = [];
+    let buf: string[] = [];
+    let bufStart = 0;
+    for (const u of units) {
+      const seg = lines.slice(u.start, u.end).join('\n');
+      if (seg.length > budget && buf.length > 0) {
+        out.push({ span: `L${bufStart + 1}-L${u.start}`, text: buf.join('\n') });
+        buf = [];
+        bufStart = u.end;
+      }
+      buf.push(seg);
+      if (buf.join('\n').length >= budget) {
+        out.push({ span: `L${bufStart + 1}-L${u.end}`, text: buf.join('\n') });
+        buf = [];
+        bufStart = u.end;
+      }
+    }
+    if (buf.length) out.push({ span: `L${bufStart + 1}-L${lines.length}`, text: buf.join('\n') });
+    return out.filter((u) => u.text.trim().length > 0);
+  }
+
+  if (kind === 'structured') {
+    // 4) 大型结构化结果：按顶层键/数组元素切分，保留可验证关键字段
+    try {
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) {
+        const out: Array<{ span: string; text: string }> = [];
+        let batch: any[] = [];
+        let startIdx = 0;
+        const flush = (endIdx: number) => {
+          out.push({ span: `items[${startIdx}..${endIdx}]`, text: JSON.stringify(batch) });
+          batch = [];
+        };
+        for (let i = 0; i < parsed.length; i++) {
+          batch.push(parsed[i]);
+          if (JSON.stringify(batch).length >= budget) { flush(i); startIdx = i + 1; }
+        }
+        if (batch.length) flush(parsed.length - 1);
+        return out.length ? out : [{ span: 'root', text: content }];
+      }
+    } catch { /* fall through to text */ }
+  }
+
+  if (kind === 'log') {
+    // 5) 日志：按时间戳行分块，错误行强制随同块保留（不删故障判断上下文）
+    const lines = content.split('\n');
+    const out: Array<{ span: string; text: string }> = [];
+    let buf: string[] = [];
+    let startLine = 1;
+    for (let i = 0; i < lines.length; i++) {
+      buf.push(lines[i]);
+      const isErr = /\b(ERROR|FATAL|error|failed|exception|traceback)\b/i.test(lines[i]);
+      // 错误行及其后 3 行上下文必须与当前块一起，不得跨块丢失
+      if (buf.join('\n').length >= budget && !isErr && !lines.slice(i, i + 3).some((l) => /\b(error|fail|exception)\b/i.test(l))) {
+        out.push({ span: `L${startLine}-L${i + 1}`, text: buf.join('\n') });
+        buf = [];
+        startLine = i + 2;
+      }
+    }
+    if (buf.length) out.push({ span: `L${startLine}-L${lines.length}`, text: buf.join('\n') });
+    return out.filter((u) => u.text.trim().length > 0);
+  }
+
+  // 2) 长篇纯文本：按空行分段（段落/章节边界），保留顺序与重叠上下文
+  const paras = content.split(/\n\s*\n/);
+  const out: Array<{ span: string; text: string }> = [];
+  let buf: string[] = [];
+  let startP = 0;
+  for (let i = 0; i < paras.length; i++) {
+    buf.push(paras[i]);
+    if (buf.join('\n\n').length >= budget) {
+      out.push({ span: `P${startP + 1}-P${i + 1}`, text: buf.join('\n\n') });
+      buf = [];
+      startP = i + 1;
+    }
+  }
+  if (buf.length) out.push({ span: `P${startP + 1}-P${paras.length}`, text: buf.join('\n\n') });
+  return out.filter((u) => u.text.trim().length > 0);
+}
+
+/**
+ * 把超长单条消息切成可安全进入压缩请求的块。
+ * 返回的块按原始顺序排列；拼回 join('') 之外的语义由 sourceSpan 描述。
+ * 保留原文引用：调用方应同时保存原始内容（不入库删除前的保护）。
+ */
+export function splitOversizedMessage(
+  msg: { seq: number; content: string },
+  budgetTokens: number,
+): OversizedChunk[] {
+  // Token 预算换算为字符预算（与 tokens.ts 同一保守系数，略保守）
+  const charBudget = Math.max(2000, Math.floor(budgetTokens * 1.9));
+  const kind = classifyContent(msg.content);
+  const units = splitByStructure(msg.content, kind, charBudget);
+
+  // ===== 绝对不变量：任何输出块都不得超过字符预算 =====
+  // 修复的真实缺陷：按段落/结构切分时，若内容本身没有可用边界
+  //（例如一整行 20 万字符、无空行、无代码结构），splitByStructure 会返回
+  // 单个超大块。原先的硬切兜底只在 units.length === 0 时触发，因此永远不
+  // 生效，超长块会被直接送给模型 —— 正是任务书 5.2 禁止的
+  // "先构造一个超出模型容量的超长请求"。
+  // 现在对**每一个**超预算的单元统一做字符硬切（首尾都保留，绝不只留一头）。
+  const normalized: Array<{ span: string; text: string }> = [];
+  for (const u of units) {
+    if (u.text.length <= charBudget) { normalized.push(u); continue; }
+    for (let i = 0; i < u.text.length; i += charBudget) {
+      const piece = u.text.slice(i, Math.min(i + charBudget, u.text.length));
+      normalized.push({
+        span: `${u.span} [字符硬切 ${i}-${Math.min(i + charBudget, u.text.length)}]`,
+        text: piece,
+      });
+    }
+  }
+
+  // 连一个结构单元都切不出来时（units 为空），整体硬切
+  const final = normalized.length > 0 ? normalized : (() => {
+    const hard: Array<{ span: string; text: string }> = [];
+    for (let i = 0; i < msg.content.length; i += charBudget) {
+      hard.push({ span: `chars${i}-${Math.min(i + charBudget, msg.content.length)}`, text: msg.content.slice(i, i + charBudget) });
+    }
+    return hard;
+  })();
+
+  return final.map((u, n) => ({
+    sourceSeq: msg.seq, chunkIndex: n + 1, chunkTotal: final.length,
+    sourceSpan: u.span, kind, content: u.text,
+  }));
+}
+
 /** 需要多少层合并才能使总计 token 降到预算内（防止无限合并） */
 export function mergeDepthEstimate(totalTokens: number, groupBudgetTokens: number): number {
   if (totalTokens <= groupBudgetTokens) return 0;

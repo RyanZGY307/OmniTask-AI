@@ -222,6 +222,41 @@ const SMALL_8K = { contextWindow: 8192, maxOutputTokens: 2048 };
     check('超大历史需要多级合并且层数有限（防无限合并）', d >= 1 && d <= 12, `depth=${d}`);
   }
 
+  S('13b. 单条超长消息的分块必须真正进入压缩范围（数据丢失缺陷回归）');
+  {
+    // 修复的缺陷：planSegments 把超长消息放入 oversizedMessages 并跳过，
+    // 而 runCompressionTask 从未消费该字段 —— 消息既不在任何分段
+    // （内容从未被摘要），又被 storage 的 deleteMany({seq 范围}) 删掉。
+    // 这里固定"分块被消费"这个契约。
+    const { splitOversizedMessage, classifyContent } = require('../src/services/memoryManager/segments');
+    const big = { seq: 7, content: 'X'.repeat(200000) };
+    const chunks = splitOversizedMessage(big, 500);
+    check('超长消息被切出多个块', chunks.length > 1, `got ${chunks.length}`);
+    check('每个块都带原始消息 seq（可溯源）', chunks.every((c: any) => c.sourceSeq === 7));
+    check('块序号连续且总数为真实值', chunks.every((c: any, i: number) => c.chunkIndex === i + 1 && c.chunkTotal === chunks.length));
+    check('每个块都有来源定位', chunks.every((c: any) => typeof c.sourceSpan === 'string' && c.sourceSpan.length > 0));
+    const joined = chunks.map((c: any) => c.content).join('');
+    check('分块内容不丢失（拼接长度 ≈ 原文）', joined.length >= big.content.length * 0.98,
+      `joined=${joined.length} orig=${big.content.length}`);
+    check('块内容不超过字符预算（可安全进入压缩请求）',
+      chunks.every((c: any) => c.content.length <= 500 * 1.9 + 2000));
+
+    // 源码守卫：分块结果必须被真正压缩，且删除前必须校验覆盖
+    const { readFileSync } = require('fs');
+    const src2 = readFileSync('src/services/memoryManager/index.ts', 'utf-8');
+    const clean2 = src2.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    check('执行器消费 oversizedChunks（非空转）', /entries\(\)/.test(clean2) && /oversizedChunks/.test(clean2) && /for \(const \[ci, ch\] of oversizedChunks/.test(clean2));
+    check('分块走真实模型压缩（OVERSIZED_SYSTEM）', /OVERSIZED_SYSTEM/.test(clean2));
+    check('分块入库带来源（sourceStartSeq: ch.sourceSeq）', /sourceStartSeq: ch.sourceSeq/.test(clean2));
+    check('删除前校验范围内无未覆盖消息', /uncovered.length > 0/.test(clean2));
+    check('发现未覆盖消息时拒绝删除并置 FAILED', /拒绝删除：范围内/.test(clean2));
+
+    // 类型分类覆盖任务书 5.11 的 1-6 优先级
+    check('代码内容被识别为 code', classifyContent('import x\nfunction f() {}\n') === 'code');
+    check('JSON 被识别为 structured', classifyContent('{"a":[1,2,3],"b":"c"}') === 'structured');
+    check('日志被识别为 log', classifyContent('2026-01-01T00:00:00 ERROR boom\n') === 'log');
+  }
+
   S('14. 防误用：估算函数对空值与极短输入稳健');
   {
     check('空串 → 0', estimateTokens('') === 0);
