@@ -56,6 +56,7 @@ import importRoutes from './routes/import';
 import expressionRoutes from './routes/expression';
 import promptRoutes from './routes/prompt';
 import { initWorkerPool } from './services/workerPool';
+import { startMemoryCompressionWorker, stopMemoryCompressionWorker } from './services/memoryManager/worker';
 import { cleanupSessions } from './services/sessionState';
 import mediaRoutes from './routes/media';
 import audioRoutes from './routes/audio';
@@ -280,6 +281,10 @@ async function startup() {
   setInterval(() => {
     cleanupSessions();
   }, 30 * 60 * 1000);
+
+  // 对话记忆压缩派发器（与 worker pool 无关：任务表在 conversation 库）。
+  // 启动时先恢复被中断的任务（进程重启不会丢失未完成的压缩）。
+  startMemoryCompressionWorker();
 
   // Start knowledge research worker pool
   initWorkerPool({ maxConcurrency: parseInt(process.env.RESEARCH_MAX_CONCURRENCY || '5') }).catch((err) =>

@@ -1047,6 +1047,11 @@ router.post('/', authMiddleware, rateLimit(60000, 30), async (req: AuthRequest, 
       skillIds: agent.skillIds,
     });
 
+    // 本次请求结束：压缩提示随本次请求一起消失（任务可能仍在后台跑，
+    // 下一次请求会重新评估并按需重新提示）。不清除会让提示长期悬挂。
+    if (agent.activeCompressionTaskId) {
+      safeWrite(`data: ${JSON.stringify({ type: 'context_compression_done' })}\n\n`);
+    }
     safeWrite(`data: ${JSON.stringify({ type: 'done', model: usedModel, tokens: tokenCount, creditsCost, conversationId: conversation.id, traceId })}\n\n`);
     safeWrite('data: [DONE]\n\n');
     if (!clientDisconnected) res.end();
