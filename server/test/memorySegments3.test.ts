@@ -147,6 +147,29 @@ const FINAL_OK = JSON.stringify({
     check('中止时明确说明原始消息未动', /原始消息未动/.test(clean));
   }
 
+  S('9. 压缩必须使用用户当前选择的模型（任务书 8.1-8.4）');
+  {
+    // 沿真实调用链锁住四处：入口模型来源 → 上下文触发 → 存储触发 →
+    // 任务落库 → 执行时取用。任何一处改成硬编码模型都会让本组断言失败。
+    const { readFileSync } = require('fs');
+    const chatClean = readFileSync('src/routes/chat.ts', 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+    check('用户所选模型经项目路由得出（routeModel(user, requestedModel,...)）',
+      /routeModel\(\s*user\s*,\s*requestedModel/.test(chatClean));
+    check('agent.modelKey 取自路由结果 decision.model', /let modelKey = decision\.model/.test(chatClean));
+    check('存储压缩触发传入 agent.modelKey', /enqueueIfIdle\(conversationId, userId, 'storage', d\.compressStartSeq, d\.compressEndSeq, agent\.modelKey\)/.test(chatClean));
+    check('上下文压缩触发传入 input.modelKey', /enqueueIfIdle\(input\.conversationId, input\.userId, 'context_85', startSeq, endSeq, input\.modelKey\)/.test(clean));
+    check('runCompressionTask 从 task.modelId 取模型（落库快照）', /const modelKey = task\.modelId/.test(clean));
+    check('无硬编码默认摘要模型', !/summaryModel|SUMMARY_MODEL|defaultSummaryModel/.test(clean));
+    check('压缩请求经 chatWithFallback（项目模型出口）', /chatWithFallback\(/.test(clean));
+    check('模型切换即预算失真，安全失败', /压缩期间发生模型切换/.test(clean));
+    check('模型错误即失败，不吞掉', /压缩模型调用失败/.test(clean));
+    check('压缩模型结果不写为 assistant 消息（§8.2 不得混入可见历史）',
+      !/role: 'assistant'/.test(clean));
+    check('压缩用独立内部提示词（§8.2）', /SEGMENT_SYSTEM = /.test(clean) && /MERGE_SYSTEM = /.test(clean));
+  }
+
   console.log(`\n摘要与失败安全测试：${pass} 通过 / ${fail} 失败`);
   // 给 Prisma 的异步引擎加载留出崩溃时间，再退出
   setTimeout(() => process.exit(fail > 0 ? 1 : 0), 120);
