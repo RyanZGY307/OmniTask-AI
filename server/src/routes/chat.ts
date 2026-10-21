@@ -1007,6 +1007,11 @@ router.post('/', authMiddleware, rateLimit(60000, 30), async (req: AuthRequest, 
         modelKey: usedModel,
         mode: mode || 'standard',
         providerUsage: { inputTokens, outputTokens },
+        // provider 是 TokenUsage 的必填列：历史上从未赋值，导致本表一行都
+        // 写不进去（错误被上面的 catch 吞成 warn）。
+        provider: agent.modelInfo.provider,
+        // 以真实扣费额为准，避免用户看到的消耗与实际扣费不一致。
+        creditsUsed: creditsCost,
         traceId,
         requestId,
       });
@@ -1667,6 +1672,11 @@ router.post('/:id/messages', authMiddleware, rateLimit(60000, 30), async (req: A
         modelKey: usedModel,
         mode: mode || 'standard',
         providerUsage: { inputTokens, outputTokens },
+        // provider 是 TokenUsage 的必填列：历史上从未赋值，导致本表一行都
+        // 写不进去（错误被上面的 catch 吞成 warn）。
+        provider: agent.modelInfo.provider,
+        // 以真实扣费额为准，避免用户看到的消耗与实际扣费不一致。
+        creditsUsed: creditsCost,
         traceId,
         requestId,
       });

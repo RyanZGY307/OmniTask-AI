@@ -74,7 +74,21 @@ export async function applyEntry(input: LedgerInput): Promise<LedgerResult> {
 
       const negative = isNegative(input.type);
       const signed = negative ? -input.credits : input.credits;
-      const balanceAfter = user.creditBalance + signed;
+
+      // 快速失败：先用当前读到的余额挡掉明显不足的情况。
+      if (user.creditBalance + signed < -0.000001) throw new Error('积分不足');
+
+      // 原子增减，而不是「读出来 → 相加 → 整值覆写」。
+      // 旧写法是 balanceAfter = user.creditBalance + signed 之后
+      // update({ creditBalance: balanceAfter })：两个并发事务都读到 100、
+      // 都写回 99，其中一次扣费被静默吞掉（丢失更新）。increment 由数据库
+      // 串行执行，并发扣费不会互相覆盖余额。
+      const updated = await tx.user.update({
+        where: { id: input.userId },
+        data: { creditBalance: { increment: signed } },
+      });
+      const balanceAfter = updated.creditBalance;
+      // 精确复检：并发下真实结果可能为负，此时抛错让整个事务回滚。
       if (balanceAfter < -0.000001) throw new Error('积分不足');
 
       const entry = await tx.creditLedger.create({
@@ -130,8 +144,8 @@ export async function applyEntry(input: LedgerInput): Promise<LedgerResult> {
         });
       }
 
-      await tx.user.update({ where: { id: input.userId }, data: { creditBalance: balanceAfter } });
-
+      // 余额已由上面的原子 increment 更新到位，此处不再整值覆写 ——
+      // 那会把其他并发事务刚写入的余额又按本事务的旧值覆盖回去。
       return { success: true, duplicate: false, balanceAfter, ledgerId: entry.id };
     });
   } catch (err: any) {
