@@ -86,6 +86,10 @@ interface ChatState {
   conversations: Conversation[];
   currentMessages: Message[];
   isLoadingMessages: boolean;
+  /** 更早的历史是否还有（后端不再一次给全，触顶时才去取） */
+  hasMoreOlder: boolean;
+  /** 正在向上加载更早的一条 */
+  isLoadingOlder: boolean;
   isStreaming: boolean;
   streamingContent: string;
   currentMode: string;
@@ -107,6 +111,8 @@ interface ChatState {
 
     fetchConversations: () => Promise<void>;
     fetchMessages: (conversationId: string) => Promise<void>;
+    /** 按需加载更早历史：向后端带 before 游标，追加到 currentMessages 头部 */
+    loadOlderMessages: (conversationId: string) => Promise<void>;
     createConversation: () => Promise<string>;
     deleteConversation: (id: string) => Promise<void>;
     togglePin: (id: string, isPinned: boolean) => Promise<void>;
@@ -139,6 +145,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   currentMessages: [],
   isLoadingMessages: false,
+  hasMoreOlder: false,
+  isLoadingOlder: false,
   isStreaming: false,
   streamingContent: '',
   currentMode: 'standard',
@@ -159,7 +167,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
     mediaConfirming: false,
 
   fetchConversations: async () => { try { const data = await apiGet('/chat/conversations'); set({ conversations: data.conversations }); } catch {} },
-  fetchMessages: async (conversationId: string) => { set({ isLoadingMessages: true }); try { const data = await apiGet(`/chat/conversations/${conversationId}/messages`); set({ currentMessages: data.messages }); } catch {} finally { set({ isLoadingMessages: false }); } },
+  // 会话历史按需取：默认只取最近一页（后端默认 50 条），是否还有更早的由
+  // hasMoreOlder 告诉上层；要更早的由 loadOlderMessages 触发，后端不全量搬运。
+  fetchMessages: async (conversationId: string) => {
+    set({ isLoadingMessages: true });
+    try {
+      const data = await apiGet(`/chat/conversations/${conversationId}/messages`);
+      set({
+        currentMessages: data.messages,
+        hasMoreOlder: !!data.hasMore,
+        isLoadingOlder: false,
+      });
+    } catch {} finally { set({ isLoadingMessages: false }); }
+  },
+  // 按需加载更早历史。游标用当前最旧一条的 id（后端按 createdAt+id 复合游标），
+  // 追加到头部。正在加载或没有更多时直接返回，避免重复请求。
+  loadOlderMessages: async (conversationId: string) => {
+    const st = get();
+    if (st.isLoadingOlder || !st.hasMoreOlder) return;
+    const oldest = st.currentMessages[0];
+    if (!oldest) return;
+    set({ isLoadingOlder: true });
+    try {
+      const q = `?limit=50&before=${encodeURIComponent(oldest.id)}`;
+      const data = await apiGet(`/chat/conversations/${conversationId}/messages${q}`);
+      if (data.messages?.length) {
+        set({ currentMessages: [...data.messages, ...get().currentMessages] });
+      }
+      set({ hasMoreOlder: !!data.hasMore });
+    } catch {} finally { set({ isLoadingOlder: false }); }
+  },
   createConversation: async () => { const data = await apiPost('/chat/conversations', {}); get().fetchConversations(); return data.conversation.id; },
   deleteConversation: async (id: string) => { try { await apiDelete(`/chat/conversations/${id}`); set({ conversations: get().conversations.filter(c => c.id !== id) }); } catch {} },
   togglePin: async (id: string, isPinned: boolean) => { try { await apiPatch(`/chat/conversations/${id}`, { isPinned: !isPinned }); get().fetchConversations(); } catch {} },
