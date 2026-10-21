@@ -1,8 +1,12 @@
 // ================================================================
 // Token Usage Integration — the chat-path entry point.
 //
-//   provider usage → 真实 token → credit deduction
-//   (Postgres transaction + retry) → TokenUsage row → user view.
+//   provider usage → 真实 token → TokenUsage row → user view.
+//
+// **本模块不扣费。** 扣费的唯一入口是 services/credits.ts 的 deductCredits
+// （→ finance/billingLedger.chargeCredits，带幂等键、账本与重试）。
+// 曾经这里也做了一次 creditBalance 扣减（deductUserCredits），与上面那条
+// 路径构成同一请求扣两次积分的双扣；该扣减已删除。
 //
 // 展示与扣费读同一组真实值。放大乘数、overflow 转移、防反推取整均已删除，
 // 见 tokenBilling.ts 文件头。
@@ -31,6 +35,18 @@ export interface TokenUsageInput {
   modelKey: string;
   mode: string | ChatMode;
   providerUsage: ProviderUsage;
+  /**
+   * 必填。TokenUsage.provider 在 schema 里是无默认值的必填列，历史代码
+   * 从未给它赋值，导致每次 create 都抛 "Argument provider is missing"，
+   * 错误在 chat.ts 被 catch 成 warn 后继续 —— 于是这张表**一行都没写进去过**。
+   */
+  provider: string;
+  /**
+   * 本请求实际扣掉的积分数，由调用方（chat.ts，已扣费的那一处）传入。
+   * 不传则按 tokenBilling 的公式自行换算。两者只应有一个来源，否则
+   * 用户看到的值与真实扣费会不一致。
+   */
+  creditsUsed?: number;
   traceId?: string;
   requestId?: string;
 }
@@ -50,6 +66,8 @@ export function buildUsageRecord(input: {
   sessionId?: string;
   messageId?: string;
   model: string;
+  /** 必填列，见 TokenUsageInput.provider 的说明。 */
+  provider: string;
   modelVersion?: string | null;
   actualInput: number;
   actualOutput: number;
@@ -65,6 +83,7 @@ export function buildUsageRecord(input: {
     userId: input.userId,
     sessionId: input.sessionId ?? null,
     messageId: input.messageId ?? null,
+    provider: input.provider,
     actualInputTokens: input.actualInput,
     actualOutputTokens: input.actualOutput,
     actualTotalTokens: actualTotal,
@@ -83,55 +102,6 @@ export function buildUsageRecord(input: {
   };
 }
 
-// Under Postgres, concurrent credit deductions can hit serialization
-// conflicts (P2034/40001/40P01 deadlock). Credit deduction + usage write
-// happen in one
-// transaction with 3 retries (200ms * attempt backoff) so a concurrent
-// writer never silently loses an update.
-export async function deductUserCredits(
-  userId: string,
-  credits: number,
-  usageData: Record<string, any>,
-): Promise<void> {
-  const MAX = 3;
-  for (let attempt = 1; attempt <= MAX; attempt++) {
-    try {
-      await prismaUser.$transaction(async (tx: any) => {
-        const user = await tx.user.findUnique({ where: { id: userId } });
-        if (!user) throw new Error('User not found');
-        if (user.creditBalance + 0 < credits) {
-          // Insufficient credits: still record usage (actual is immutable,
-          // cost tracking continues) but do not over-deduct below zero.
-          await tx.tokenUsage.create({ data: usageData });
-          return;
-        }
-        await tx.user.update({
-          where: { id: userId },
-          data: { creditBalance: { decrement: credits } },
-        });
-        await tx.tokenUsage.create({ data: usageData });
-      });
-      return;
-    } catch (err: any) {
-      const busy =
-        /serialization failure|deadlock/i.test(err?.message ?? '') ||
-        err?.code === 'P1017' ||
-        err?.code === 'P1001';
-      // Insufficient-credits path returns early without throwing; only DB
-      // lock/contention retries here.
-      if (busy && attempt < MAX) {
-        await new Promise((r) => setTimeout(r, attempt * 200));
-        continue;
-      }
-      if (!busy) {
-        // Non-lock errors (e.g. the "User not found" case) propagate.
-        throw err;
-      }
-    }
-  }
-  // Reaching here means we exhausted retries on a busy lock.
-  throw new Error('DB_BUSY: credit deduction failed after retries');
-}
 
 export async function processTokenUsage(input: TokenUsageInput): Promise<UserTokenView> {
   const mode = normalizeMode(input.mode);
@@ -156,6 +126,7 @@ export async function processTokenUsage(input: TokenUsageInput): Promise<UserTok
     sessionId: input.sessionId,
     messageId: input.messageId,
     model: input.modelKey,
+    provider: input.provider,
     modelVersion: row?.version ?? null,
     actualInput,
     actualOutput,
@@ -168,9 +139,14 @@ export async function processTokenUsage(input: TokenUsageInput): Promise<UserTok
     limitVerifiedAt: row?.verifiedAt?.toISOString() ?? null,
   });
 
-  // 5) Credit deduction — 用真实 token 换算，不再读放大后的中间值。
-  const creditsUsed = deductCredits(display, input.modelKey);
-  await withRetry(() => deductUserCredits(input.userId, creditsUsed, usageData), 3, 'deductUserCredits');
+  // 5) 落库 TokenUsage。**不在这里扣费** —— 扣费已由 chat.ts 的
+  //    deductCredits（→ chargeCredits，带幂等键与账本）单独完成。
+  //    原先此处又一次 decrement creditBalance，构成双扣，已删除。
+  //    creditsUsed 以调用方传入的实际扣费额为准；未传时才用公式换算，
+  //    这样用户看到的积分消耗与实际扣费永远是同一个数。
+  //    并发写可能撞上序列化冲突（P2034/40001/40P01），保留退避重试。
+  const creditsUsed = input.creditsUsed ?? deductCredits(display, input.modelKey);
+  await withRetry(() => prismaUser.tokenUsage.create({ data: usageData }), 3, 'tokenUsage.create');
 
   // 6) 用户视图：只给 token 与积分。字段名沿用 display*，
   //    值已与真实消耗一致。
