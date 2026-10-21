@@ -831,7 +831,16 @@ router.post('/', authMiddleware, rateLimit(60000, 30), async (req: AuthRequest, 
 
     // Agent Runtime + Memory Runtime
     // SSE 预连接：先建响应、立刻发 accepted 事件，再跑预处理（知识库查询/预排队），首字节即时返回
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      // 反缓冲：中间的 nginx / 平台边缘代理默认会把 SSE 攒成一整个 chunk
+      // 再吐出去，"首字节即时返回"就失效了。X-Accel-Buffering 是让这类
+      // 代理关闭响应缓冲的标准开关（对本站部署链路上的 Render 边缘同样有效）。
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders();
     res.write(`data: ${JSON.stringify({ type: 'accepted' })}\n\n`);
     const agent = await buildAgentChat(userId, user, message, mode, requestedModel, [], traceId);
 
@@ -1446,7 +1455,16 @@ router.post('/:id/messages', authMiddleware, rateLimit(60000, 30), async (req: A
 
     // Agent Runtime + Memory Runtime
     // SSE 预连接（先建响应再跑预处理，首字节即时）
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      // 反缓冲：中间的 nginx / 平台边缘代理默认会把 SSE 攒成一整个 chunk
+      // 再吐出去，"首字节即时返回"就失效了。X-Accel-Buffering 是让这类
+      // 代理关闭响应缓冲的标准开关（对本站部署链路上的 Render 边缘同样有效）。
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders();
     res.write(`data: ${JSON.stringify({ type: 'accepted' })}\n\n`);
     // ===== 上下文压缩状态（对话感知）=====
     // 任务书要求"聊天时正在发生历史压缩"必须可感知、可理解，且前端文案固定。
