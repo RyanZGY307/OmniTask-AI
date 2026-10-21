@@ -1,7 +1,12 @@
 // ================================================================
 // Hardcoded provider base URLs (no longer read from env)
 // ================================================================
-export const PROVIDER_BASE_URLS = {
+// ⚠️ 迁移中：下表仍是代码内写死的供应商端点，与"供应商不由代码写死、
+// 改由管理页维护"的要求冲突。管理页已有 ProviderConnection 表承载
+// 完整端点（services/providerConfig.ts），消费方应改读那里。
+// 本表保留仅为让现存调用点继续编译，新增/改供应商一律走管理页，
+// 不得再往本表加条目。下一条提交开始逐个替换调用点。
+export const PROVIDER_BASE_URLS: Record<string, string> = {
   agnes:    'https://apihub.agnes-ai.com/v1',
   agnesRoot: 'https://apihub.agnes-ai.com',
   deepseek: 'https://api.deepseek.com/v1',
@@ -9,11 +14,23 @@ export const PROVIDER_BASE_URLS = {
   google:   'https://generativelanguage.googleapis.com/v1beta',
   xiaomi:   'https://api.xiaomi.com/v1',
 };
+// 同上的兼容常量， deprecated：模型一律由管理页 ModelConfig 提供。
+export const AGNES_MODEL = 'agnes-3.0-flash';
+
+// ================================================================
+// 数据库连接串：来源已改为管理页维护的本地加密文件，不再读部署环境变量。
+// 见 services/systemConfig.ts 的引导说明。
+// ================================================================
+import { getDbConnection, loadSystemConfigSync } from './services/systemConfig';
+loadSystemConfigSync();
+const _dbUser = getDbConnection('user');
+const _dbKnowledge = getDbConnection('knowledge');
 
 export const env = {
   PORT: parseInt(process.env.PORT || '3001'),
-  DATABASE_URL_USER: process.env.DATABASE_URL_USER,
-  DATABASE_URL_KNOWLEDGE: process.env.DATABASE_URL_KNOWLEDGE,
+  // 未配置时为 undefined（setup 模式）；原先是直接读 process.env
+  DATABASE_URL_USER: _dbUser ?? undefined,
+  DATABASE_URL_KNOWLEDGE: _dbKnowledge ?? undefined,
   JWT_SECRET: process.env.JWT_SECRET || 'cortex-jwt-secret-change-me',
   CLIENT_URL: process.env.CLIENT_URL || '*',
   ADMIN_EMAIL: process.env.ADMIN_EMAIL || 'admin@cortex.ai',
