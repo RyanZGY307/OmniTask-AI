@@ -1,28 +1,17 @@
 // ================================================================
-// Token Billing — engine + overflow + anti-reverse + limits tests.
+// Token Billing — 单轨（真实 token）测试
 // Run: npx tsx test/tokenBilling.test.ts
 //
-// Zero-provider-call: the pure engine is exercised directly; DB /
-// provider fetch are not in scope here. Covers:
-//   - all 8 detailed billing examples (A-H)
-//   - overflow transfer invariants (displayTotal is constant)
-//   - fast mode / unknown limit / zero output / negative input guards
-//   - deterministic anti-reverse rounding
-//   - model limit discovery fallback + headroom
-//   - mode normalization + multiplier ceiling
+// 覆盖：
+//   · calculateBilling 在任何模式下都原样返回真实 token（无放大）
+//   · overflow 恒为 false / 0（转移逻辑已删）
+//   · 负数 / NaN / 小数被拦住，但不被"美化"
+//   · deductCredits 按真实 token 换算，而非放大后的中间值
+//   · mode 仍是合法元数据，但不影响任何数值
+//   · 回归护栏：被删除的造假符号不得重新导出
 // ================================================================
 
-import {
-  MODE_MULTIPLIER,
-  MAX_ALLOWED_MULTIPLIER,
-  normalizeMode,
-  multiplierFor,
-  calculateBilling,
-  deductCredits,
-  deterministicRound,
-  applyAntiReverseRounding,
-} from '../src/services/billing/tokenBilling';
-import { headroom } from '../src/services/billing/modelLimits';
+import * as B from '../src/services/billing/tokenBilling';
 
 let pass = 0;
 let fail = 0;
@@ -31,141 +20,108 @@ function check(name: string, cond: boolean, detail?: string) {
   else { fail++; console.log(`  FAIL ${name}${detail ? ' — ' + detail : ''}`); }
 }
 
-// ==================== Multiplier + mode normalization ====================
-console.log('\n=== Multiplier & mode ===');
-{
-  check('fast=1.0', MODE_MULTIPLIER.fast === 1.0);
-  check('standard=1.1', MODE_MULTIPLIER.standard === 1.1);
-  check('thinking=1.2', MODE_MULTIPLIER.thinking === 1.2);
-  check('ceiling=1.2', MAX_ALLOWED_MULTIPLIER === 1.2);
-  check('normalize unknown -> fast', normalizeMode('bogus') === 'fast');
-  check('normalize null -> fast', normalizeMode(null) === 'fast');
-  check('normalize thinking ok', normalizeMode('thinking') === 'thinking');
-  check('multiplierFor fast=1', multiplierFor('fast') === 1);
-  check('multiplierFor standard=1.1', multiplierFor('standard') === 1.1);
-  check('multiplierFor thinking=1.2', multiplierFor('thinking') === 1.2);
-}
+const modes = ['fast', 'standard', 'thinking'] as const;
 
-// ==================== Detailed examples A-H ====================
-console.log('\n=== Example A: standard, no overflow ===');
+// ==================== 1. 无放大 ====================
+console.log('\n=== 1. 所有模式下都不放大 ===');
 {
-  const r = calculateBilling(4000, 2000, 'standard', 8192);
-  check('A displayOutput=2200', r.displayOutput === 2200, `got ${r.displayOutput}`);
-  check('A displayInput=4000', r.displayInput === 4000);
-  check('A displayTotal=6200', r.displayTotal === 6200, `got ${r.displayTotal}`);
-  check('A no overflow', r.overflowTransferred === false && r.overflowAmount === 0);
-}
-
-console.log('\n=== Example B: thinking, overflow ===');
-{
-  const r = calculateBilling(4000, 8000, 'thinking', 8192);
-  // inflated = ceil(8000*1.2)=9600 > 8192, overflow=1408
-  check('B displayInput=5408', r.displayInput === 5408, `got ${r.displayInput}`);
-  check('B displayOutput=8192', r.displayOutput === 8192, `got ${r.displayOutput}`);
-  check('B displayTotal=13600', r.displayTotal === 13600, `got ${r.displayTotal}`);
-  check('B overflowTransferred', r.overflowTransferred === true);
-  check('B overflowAmount=1408', r.overflowAmount === 1408, `got ${r.overflowAmount}`);
-}
-
-console.log('\n=== Example C: standard, boundary (no overflow) ===');
-{
-  const r = calculateBilling(3000, 7447, 'standard', 8192);
-  // ceil(7447*1.1)=ceil(8191.7)=8192 == limit, no overflow
-  check('C displayOutput=8192', r.displayOutput === 8192, `got ${r.displayOutput}`);
-  check('C displayInput=3000', r.displayInput === 3000);
-  check('C no overflow', r.overflowTransferred === false);
-  check('C displayTotal=11192', r.displayTotal === 11192, `got ${r.displayTotal}`);
-}
-
-console.log('\n=== Example D: fast mode ===');
-{
-  const r = calculateBilling(5000, 3000, 'fast', 8192);
-  check('D displayInput=5000', r.displayInput === 5000);
-  check('D displayOutput=3000', r.displayOutput === 3000);
-  check('D displayTotal=8000', r.displayTotal === 8000);
-  check('D no overflow', r.overflowTransferred === false);
-}
-
-console.log('\n=== Example E: unknown limit (no inflation) ===');
-{
-  const r = calculateBilling(2000, 1500, 'thinking', null);
-  check('E displayInput=2000', r.displayInput === 2000);
-  check('E displayOutput=1500', r.displayOutput === 1500);
-  check('E displayTotal=3500', r.displayTotal === 3500);
-  check('E no overflow', r.overflowTransferred === false);
-}
-
-console.log('\n=== Example F: short answer high multiplier ===');
-{
-  const r = calculateBilling(800, 150, 'thinking', 8192);
-  check('F displayOutput=180', r.displayOutput === 180, `got ${r.displayOutput}`);
-  check('F displayTotal=980', r.displayTotal === 980, `got ${r.displayTotal}`);
-}
-
-console.log('\n=== Example G: actualOutput=0 ===');
-{
-  const r = calculateBilling(5000, 0, 'thinking', 8192);
-  check('G displayOutput=0', r.displayOutput === 0);
-  check('G displayInput=5000', r.displayInput === 5000);
-  check('G displayTotal=5000', r.displayTotal === 5000);
-}
-
-console.log('\n=== Example H: overflow > actualInput ===');
-{
-  const r = calculateBilling(100, 8000, 'thinking', 8192);
-  check('H displayInput=1508', r.displayInput === 1508, `got ${r.displayInput}`);
-  check('H displayOutput=8192', r.displayOutput === 8192);
-  check('H displayTotal=9700', r.displayTotal === 9700, `got ${r.displayTotal}`);
-}
-
-// ==================== Invariants ====================
-console.log('\n=== Invariants ===');
-{
-  // displayTotal is invariant across overflow vs no-overflow:
-  // actualInput + ceil(actualOutput*mult)
-  const cases: Array<[number, number, 'standard' | 'thinking', number]> = [
-    [4000, 8000, 'thinking', 8192],
-    [3000, 7447, 'standard', 8192],
-    [100, 8000, 'thinking', 8192],
-    [5000, 0, 'thinking', 8192],
-  ];
-  for (const [i, o, m, limit] of cases) {
-    const r = calculateBilling(i, o, m, limit);
-    const expectedTotal = i + Math.ceil(o * multiplierFor(m));
-    check(`total invariant (${i},${o},${m})`, r.displayTotal === expectedTotal, `got ${r.displayTotal} want ${expectedTotal}`);
+  for (const m of modes) {
+    const r = B.calculateBilling(4000, 2000, m, 8192);
+    check(`${m}: output 原样 2000`, r.displayOutput === 2000, `got ${r.displayOutput}`);
+    check(`${m}: input 原样 4000`, r.displayInput === 4000, `got ${r.displayInput}`);
+    check(`${m}: total 原样 6000`, r.displayTotal === 6000, `got ${r.displayTotal}`);
   }
-
-  // Negative input is clamped to 0.
-  const neg = calculateBilling(-500, 100, 'standard', 8192);
-  check('negative input -> 0', neg.displayInput === 0);
-
-  // Anti-reverse rounding is deterministic (same call, same result).
-  const a = deterministicRound(4523);
-  const b = deterministicRound(4523);
-  check('deterministicRound deterministic', a === b && a % 50 === 0, `got ${a}`);
-  check('deterministicRound <100 passthrough', deterministicRound(42) === 42);
-  check('deterministicRound <1000 to 10s', deterministicRound(452) === 460, `got ${deterministicRound(452)}`);
-
-  // applyAntiReverseRounding re-sums displayTotal.
-  const rr = applyAntiReverseRounding(calculateBilling(4000, 2000, 'standard', 8192));
-  check('rounded total = sum of parts', rr.displayTotal === rr.displayInput + rr.displayOutput);
+  // 曾经的假值：standard 会给 2200，thinking 会给 2400。
+  // 这里断言它们**不再是**这些数 —— 即放大确已消失。
+  check('standard 不再是 2200（旧 ×1.1 放大）',
+    B.calculateBilling(4000, 2000, 'standard', 8192).displayOutput !== 2200);
+  check('thinking 不再是 2400（旧 ×1.2 放大）',
+    B.calculateBilling(4000, 2000, 'thinking', 8192).displayOutput !== 2400);
 }
 
-// ==================== Credit deduction ====================
-console.log('\n=== Credit deduction ===');
+// ==================== 2. overflow 已废除 ====================
+console.log('\n=== 2. overflow transfer 已删除 ===');
 {
-  // A free model (costPer1k=0) deducts nothing.
-  const freeResult = calculateBilling(4000, 2000, 'standard', 8192);
-  check('free model deducts 0', deductCredits(freeResult, 'agnes-3.0-flash') === 0);
+  const r = B.calculateBilling(4000, 8000, 'thinking', 8192);
+  check('output 不被截到上限', r.displayOutput === 8000, `got ${r.displayOutput}`);
+  check('input 不吸收溢出量', r.displayInput === 4000, `got ${r.displayInput}`);
+  check('overflowTransferred 恒 false', r.overflowTransferred === false);
+  check('overflowAmount 恒 0', r.overflowAmount === 0);
+  // 旧代码：displayInput=5408, displayOutput=8192, displayTotal=13600
+  check('不再出现旧假值 displayInput=5408', r.displayInput !== 5408);
+  check('不再出现旧假值 displayTotal=13600', r.displayTotal !== 13600);
+  check('total === input + output', r.displayTotal === r.displayInput + r.displayOutput);
 }
 
-// ==================== Headroom ====================
-console.log('\n=== Headroom ===');
+// ==================== 3. 防反推取整已删除 ====================
+console.log('\n=== 3. display 值不再被取整 ===');
 {
-  check('headroom basic', headroom(8192, 8000) === 192);
-  check('headroom overshot -> 0', headroom(8192, 9000) === 0);
-  check('headroom null limit -> null', headroom(null, 100) === null);
+  // 旧 deterministicRound 会把 1234 抬到 1250、123 抬到 130。
+  const r = B.calculateBilling(1234, 123, 'standard', null);
+  check('input 保持 1234（不再进位到 1250）', r.displayInput === 1234, `got ${r.displayInput}`);
+  check('output 保持 123（不再进位到 130）', r.displayOutput === 123, `got ${r.displayOutput}`);
+  const big = B.calculateBilling(12345, 54321, 'thinking', 8192);
+  check('大值不被取整到 50 的倍数', big.displayTotal === 66666, `got ${big.displayTotal}`);
 }
 
-console.log(`\n=== RESULT: ${pass} passed, ${fail} failed ===`);
-process.exit(fail > 0 ? 1 : 0);
+// ==================== 4. 归一化与守卫 ====================
+console.log('\n=== 4. 归一化 & 数值守卫 ===');
+{
+  check('normalize unknown -> fast', B.normalizeMode('bogus') === 'fast');
+  check('normalize null -> fast', B.normalizeMode(null) === 'fast');
+  check('normalize undefined -> fast', B.normalizeMode(undefined) === 'fast');
+  check('normalize standard ok', B.normalizeMode('standard') === 'standard');
+  check('normalize thinking ok', B.normalizeMode('thinking') === 'thinking');
+  check('可归纳的模式名', ['fast', 'standard', 'thinking'].includes(B.normalizeMode('thinking')));
+
+  const neg = B.calculateBilling(-100, -50, 'standard', 8192);
+  check('负输入被挡为 0', neg.displayInput === 0 && neg.displayOutput === 0);
+  const nan = B.calculateBilling(Number.NaN, Number.NaN, 'standard', null);
+  check('NaN 被挡为 0', nan.displayTotal === 0);
+  const frac = B.calculateBilling(100.9, 50.1, 'standard', 8192);
+  check('小数向下取整（不四舍五入）',
+    frac.displayInput === 100 && frac.displayOutput === 50,
+    `got ${frac.displayInput}/${frac.displayOutput}`);
+  check('limit=-1 不影响结果', B.calculateBilling(10, 20, 'thinking', -1).displayTotal === 30);
+  check('limit=null 不影响结果', B.calculateBilling(10, 20, 'thinking', null).displayTotal === 30);
+}
+
+// ==================== 5. 扣费按真实 token ====================
+console.log('\n=== 5. deductCredits 用真实 token ===');
+{
+  // 同一模型、同一组真实 token，三种模式必须扣同样的积分。
+  const real = B.calculateBilling(4000, 2000, 'standard', 8192);
+  const realFast = B.calculateBilling(4000, 2000, 'fast', 8192);
+  const realThink = B.calculateBilling(4000, 2000, 'thinking', 8192);
+  const cStd = B.deductCredits(real, 'agnes-3.0-flash');
+  check('standard 与 fast 扣费相同', cStd === B.deductCredits(realFast, 'agnes-3.0-flash'));
+  check('standard 与 thinking 扣费相同', cStd === B.deductCredits(realThink, 'agnes-3.0-flash'));
+  // 旧行为：thinking 会比 fast 多约 20% 积分。这里断言不再多扣。
+  check('thinking 不再比 fast 多扣（旧 ×1.2）',
+    B.deductCredits(realThink, 'agnes-3.0-flash') === B.deductCredits(realFast, 'agnes-3.0-flash'));
+  check('未知模型不扣费', B.deductCredits(real, 'no-such-model') === 0);
+  check('零 token 不扣费', B.deductCredits(B.calculateBilling(0, 0, 'thinking', 8192), 'agnes-3.0-flash') === 0);
+}
+
+// ==================== 6. 回归护栏：造假符号不得回归 ====================
+console.log('\n=== 6. 回归护栏（删除的符号不得回归） ===');
+{
+  const removed = [
+    'MODE_MULTIPLIER', 'MAX_ALLOWED_MULTIPLIER', 'multiplierFor',
+    'deterministicRound', 'applyAntiReverseRounding',
+  ];
+  const ns = B as unknown as Record<string, unknown>;
+  for (const sym of removed) {
+    check(`${sym} 已不再导出（防止造假机制悄悄回归）`, !(sym in ns), `仍导出 ${sym}`);
+  }
+  for (const sym of ['normalizeMode', 'calculateBilling', 'deductCredits']) {
+    check(`${sym} 仍导出（兼容既有调用点）`, sym in ns);
+  }
+}
+
+console.log(`\nToken Billing 单轨测试：${pass} 通过 / ${fail} 失败`);
+if (fail === 0) {
+  console.log('\n[UNVERIFIED] 未在本机验证：真实 provider usage 的端到端扣费一致性');
+  console.log('  （需要可用的 Postgres 与一次真实的 chat 请求）');
+}
+setTimeout(() => process.exit(fail > 0 ? 1 : 0), 120);

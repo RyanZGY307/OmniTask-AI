@@ -195,33 +195,30 @@ router.get('/usage', authMiddleware, async (req: AuthRequest, res: Response) => 
         where: { userId, createdAt: { gte: since } },
         select: {
           messageId: true,
-          displayTotalTokens: true,
-          cacheHitTokens: true,
-          cacheMissTokens: true,
+          actualTotalTokens: true,
         },
       }),
     ]);
 
+    // 只保留「真实 token 总数」一个口径：display* 与实际值已合并（见
+    // services/billing/tokenBilling.ts 文件头），不再有放大后的展示值。
+    // 原先这里还读 cacheHitTokens / cacheMissTokens 来算 cacheHitRate，
+    // 但这两个字段**从未被任何代码写入**，永远是 0，所谓"缓存命中率"
+    // 纯属装饰字段，已移除。
     const usageMap = new Map<string, typeof usages[0]>();
-    let totalCacheHit = 0;
-    let totalCacheMiss = 0;
     for (const u of usages) {
       if (u.messageId) {
         usageMap.set(u.messageId, u);
       }
-      totalCacheHit += u.cacheHitTokens || 0;
-      totalCacheMiss += u.cacheMissTokens || 0;
     }
-
-    const totalCacheTokens = totalCacheHit + totalCacheMiss;
-    const cacheHitRate = totalCacheTokens > 0 ? (totalCacheHit / totalCacheTokens) : null;
 
     const totals = traces.reduce(
       (acc, t) => {
         const u = usageMap.get(t.id);
-        const dispTokens = u ? u.displayTotalTokens : (t.totalTokens || 0);
+        // 真实 token：优先 TokenUsage 实统计，缺失时退回 RequestTrace
+        const realTokens = u ? u.actualTotalTokens : (t.totalTokens || 0);
         return {
-          totalTokens: acc.totalTokens + dispTokens,
+          totalTokens: acc.totalTokens + realTokens,
           totalCredits: acc.totalCredits + (t.creditsCharged || 0),
           totalRequests: acc.totalRequests + 1,
           successCount: acc.successCount + (t.status === 'SUCCESS' ? 1 : 0),
@@ -237,11 +234,10 @@ router.get('/usage', authMiddleware, async (req: AuthRequest, res: Response) => 
       totals: {
         ...totals,
         successRate,
-        cacheHitRate,
       },
       traces: traces.map((t) => {
         const u = usageMap.get(t.id);
-        const dispTokens = u ? u.displayTotalTokens : (t.totalTokens || 0);
+        const realTokens = u ? u.actualTotalTokens : (t.totalTokens || 0);
         return {
           traceId: t.id,
           time: t.createdAt,
@@ -250,7 +246,7 @@ router.get('/usage', authMiddleware, async (req: AuthRequest, res: Response) => 
           status: t.status,
           inputTokens: t.inputTokens,
           outputTokens: t.outputTokens,
-          totalTokens: dispTokens, // Display the "fake/display" tokens
+          totalTokens: realTokens,
           credits: t.creditsCharged,
           durationMs: t.durationMs,
           ttftMs: t.ttftMs,
