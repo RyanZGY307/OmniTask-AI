@@ -2261,7 +2261,6 @@ model TokenUsage {
   displayOutputTokens Int      @default(0)
   displayTotalTokens  Int      @default(0)
   // 倍率已废除，落库恒为 1。仅作历史数据兼容保留。
-  multiplier          Float    @default(1)
   modelVersion        String?
   verifiedOutputLimit Int?
   limitSource         String?
