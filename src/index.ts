@@ -10,6 +10,8 @@ import { env } from './config';
 import authRoutes from './routes/auth';
 import chatRoutes from './routes/chat';
 import adminRoutes from './routes/admin';
+import systemRoutes from './routes/system';
+import { isDbSetupRequired } from './services/db';
 import knowledgeRoutes from './routes/knowledge';
 import paymentRoutes from './routes/payment';
 import tokenRoutes from './routes/tokens';
@@ -122,6 +124,24 @@ app.get('/api/health', async (req, res) => {
     dbs: { user: userOk, conversation: convOk, knowledge: knowOk, overflow: overOk },
     standby: { clients: activeClientCount() },
   });
+});
+
+// ================================================================
+// Setup 守卫：连接串未配置时，除 /api/system 外全部 503 setupRequired。
+// 必须挂在整个 /api 业务路由之前 —— 否则业务路由会连到 placeholder 库，
+// 报错含糊，调用方容易误判为"数据库故障"而去重启、重连、查监控。
+// 503 + setupRequired 让前端直接显示首次配置页。
+// system 路由先于守卫挂载，否则 setup 端点自己也会被 503 挡掉。
+// ================================================================
+app.use('/api/system', systemRoutes);
+app.use('/api', (req: any, res: any, next: any) => {
+  if (isDbSetupRequired()) {
+    return res.status(503).json({
+      error: '系统尚未配置数据库连接。请先在管理页面完成首次配置。',
+      setupRequired: true,
+    });
+  }
+  next();
 });
 
 app.use('/api/auth', authRoutes);
