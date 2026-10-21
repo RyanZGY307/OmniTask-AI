@@ -43,6 +43,7 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
     currentMessages, isLoadingMessages, isStreaming, streamingContent,
     currentMode, currentModel, modelSwitchNotice, creditBalance, toastMessage,
     researchProgress, queueStatus, contextCompression,
+    hasMoreOlder, isLoadingOlder,
   } = store;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -284,6 +285,30 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
                     提示，用户来回滚动会看到对话从中间开始，无法区分
                     "消息丢了"与"历史已压缩"。这里渲染成中性分隔线，
                     不用气泡、不用角色样式，避免被误认为模型回复。 */}
+                {/* 会话历史按需取：只有更早的历史存在时，列表顶部才出现
+                    「加载更早」。后端不再一次给全，点一下取一页（默认 50 条）。 */}
+                {hasMoreOlder && (
+                  <div className="flex items-center justify-center py-3">
+                    <button
+                      type="button"
+                      onClick={() => store.loadOlderMessages(conversationId)}
+                      disabled={isLoadingOlder}
+                      className="text-xs text-muted hover:text-accent transition-colors
+                                 disabled:opacity-50 disabled:cursor-not-allowed
+                                 flex items-center gap-2 px-3 py-1.5 rounded-full
+                                 border border-foreground/10 hover:border-accent/40"
+                    >
+                      {isLoadingOlder ? (
+                        <>
+                          <span className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full anim-spin" />
+                          正在加载…
+                        </>
+                      ) : (
+                        '↑ 加载更早的历史'
+                      )}
+                    </button>
+                  </div>
+                )}
                 {currentMessages.map((msg, i) => (
                   <div key={msg.id} id={`msg-${msg.id}`}>
                     {msg.messageType === 'compressed_history' && (

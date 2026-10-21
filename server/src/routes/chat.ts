@@ -1151,14 +1151,63 @@ router.post('/conversations', authMiddleware, rateLimit(60000, 30), async (req: 
   });
 });
 
+// 会话历史：按需分页取，后端不全量搬运。
+//
+// · limit  本页条数（1~200，默认 50）
+// · before 游标：上一页最早一条消息的 id，取它之前的更旧消息
+//
+// 游标用 (createdAt, id) 复合而不是只用 createdAt —— 同一毫秒内创建的多条
+// 消息只用时间比较会被整体跳过或重复。响应带 hasMore / nextCursor，
+// 前端据此显示「加载更多」。
 router.get('/conversations/:id/messages', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
+    // 不带 include：Prisma 默认只返回标量字段，不会自动把关系读出来。
+    // 原来是 include: { messages } 才把整段历史一次性读走的。
     const conversation = await prismaConversation.conversation.findUnique({
       where: { id: String(req.params.id) },
-      include: { messages: { orderBy: { createdAt: 'asc' } } },
     });
     if (!conversation || conversation.userId !== req.user!.id) return res.status(404).json({ error: '对话不存在' });
-    res.json({ messages: conversation.messages, conversation });
+
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit)) || 50, 1), 200);
+    const before = req.query.before ? String(req.query.before) : null;
+
+    let cursor: { createdAt: Date; id: string } | null = null;
+    if (before) {
+      const anchor = await prismaConversation.message.findUnique({
+        where: { id: before },
+        select: { createdAt: true, id: true },
+      });
+      // 游标指向的消息不存在（已删除/越权）时退回第一页，不报错。
+      if (anchor) cursor = { createdAt: anchor.createdAt, id: anchor.id };
+    }
+
+    // 按时间倒序取 limit+1 条，多取的那条用来判断还有没有更早的。
+    const rows = await prismaConversation.message.findMany({
+      where: {
+        conversationId: conversation.id,
+        ...(cursor
+          ? {
+              OR: [
+                { createdAt: { lt: cursor.createdAt } },
+                { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+    });
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    page.reverse(); // 前端按时间正序渲染
+
+    res.json({
+      messages: page,
+      conversation,
+      hasMore,
+      nextCursor: hasMore ? page[0]?.id ?? null : null,
+    });
   } catch { res.status(500).json({ error: '获取对话失败' }); }
 });
 
