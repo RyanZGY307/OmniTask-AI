@@ -253,12 +253,15 @@ export async function upsertProviderConnection(input: UpsertConnectionInput): Pr
     const conn = rowToConn(saved);
     cache.set(sk, conn);
     applyToBaseUrlMap(conn);
+    // URL/key 变了，此前的模型清单缓存一律作废。
+    invalidateModelListCache(conn.baseUrl);
     return conn;
   }
   const created = await prismaUser.providerConnection.create({ data: { provider, tier, ...data } });
   const conn = rowToConn(created);
   cache.set(sk, conn);
   applyToBaseUrlMap(conn);
+  invalidateModelListCache(conn.baseUrl);
   // key 池重建由调用方（admin 路由）触发 apiKeyPool.rebuildApiKeyPools()
   return conn;
 }
@@ -269,6 +272,7 @@ export async function deleteProviderConnection(provider: string, tier: ProviderT
     .deleteMany({ where: { provider, tier } })
     .catch(() => undefined);
   cache.delete(sk);
+  invalidateModelListCache();
   if (tier === 'FREE') delete (PROVIDER_BASE_URLS as Record<string, string>)[provider];
 }
 
@@ -280,6 +284,40 @@ export async function listProviderConnections(): Promise<ProviderConnectionRow[]
 
 const LIST_FETCH_TIMEOUT_MS = 15_000;
 
+// ----------------------------------------------------------------
+// 供应商模型清单缓存
+// ----------------------------------------------------------------
+// 模型清单基本静态、低频变化，但每次发现都要一次上游请求 + 一次整段
+// JSON.parse。这里给它一个内存 TTL 缓存：命中直接返回，不再请求也不再解析。
+//
+// Node 服务没有 Cloudflare 的 KV/Cache API，"缓存整个响应、命中透传字符串"
+// 的等价形态就是这个内存 Map。要"命中零 CPU"，更彻底的做法是缓存**预序列化
+// 的字符串**由响应层直接吐出；此处调用方只需要结构化结果，故缓存解析后的
+// 对象（省掉了上游请求与 JSON.parse 这两个真正贵的步骤）。
+//
+// key 用 baseUrl + apiKey 指纹：不同凭据的可见模型集不同，不能混。
+const MODEL_LIST_TTL_MS = 30 * 60 * 1000;
+const MODEL_LIST_MAX_ENTRIES = 200;
+
+interface ModelListEntry { rows: FetchedModelRow[]; expiresAt: number }
+const modelListCache = new Map<string, ModelListEntry>();
+
+function modelListKey(baseUrl: string, apiKey?: string): string {
+  // apiKey 不落全量：指纹足够区分，避免把凭据以明文形式留在内存键里。
+  const fp = apiKey
+    ? `${apiKey.length}:${apiKey.slice(0, 6)}:${apiKey.slice(-4)}`
+    : 'nokey';
+  return `${baseUrl}|${fp}`;
+}
+
+/** 清空模型清单缓存（上游模型有变、连接被修改时调用）。 */
+export function invalidateModelListCache(baseUrl?: string): void {
+  if (!baseUrl) { modelListCache.clear(); return; }
+  for (const k of [...modelListCache.keys()]) {
+    if (k.startsWith(`${baseUrl}|`)) modelListCache.delete(k);
+  }
+}
+
 export interface FetchedModelRow {
   id: string;
   name?: string;
@@ -288,6 +326,26 @@ export interface FetchedModelRow {
 
 // OpenAI 兼容 GET {modelsEndpoint} 优先；Google 原生 listing 兜底。
 export async function fetchProviderModelList(baseUrl: string, apiKey?: string): Promise<FetchedModelRow[]> {
+  const cacheKey = modelListKey(baseUrl, apiKey);
+  const hit = modelListCache.get(cacheKey);
+  if (hit && hit.expiresAt > Date.now()) return hit.rows;
+
+  const rows = await fetchProviderModelListUncached(baseUrl, apiKey);
+
+  if (modelListCache.size >= MODEL_LIST_MAX_ENTRIES) {
+    // 简单淘汰：先清过期的，仍满则清最早插入的一批。
+    for (const [k, v] of modelListCache) if (v.expiresAt <= Date.now()) modelListCache.delete(k);
+    while (modelListCache.size >= MODEL_LIST_MAX_ENTRIES) {
+      const oldest = modelListCache.keys().next().value;
+      if (oldest === undefined) break;
+      modelListCache.delete(oldest);
+    }
+  }
+  modelListCache.set(cacheKey, { rows, expiresAt: Date.now() + MODEL_LIST_TTL_MS });
+  return rows;
+}
+
+async function fetchProviderModelListUncached(baseUrl: string, apiKey?: string): Promise<FetchedModelRow[]> {
   const modelsUrl = modelsEndpointFromFullUrl(baseUrl);
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;

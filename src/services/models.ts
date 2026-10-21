@@ -127,14 +127,53 @@ async function* streamAgnes(messages: any[], model: string, maxTokens: number, t
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature, stream: false }),
+        // stream: true + 逐行解析，与 streamOpenAICompatible 同一套做法。
+        // 原先是 stream: false 然后 await res.json() 把整个 completion
+        // 一次性读进内存：长回复下这是最典型的「整段吞」，而且用户要等
+        // 整个回复生成完才看到第一个字。
+        // include_usage 让最后的 usage chunk 带回真实 token —— 见下面的说明。
+        body: JSON.stringify({
+          model, messages, max_tokens: maxTokens, temperature,
+          stream: true, stream_options: { include_usage: true },
+        }),
       });
       if (res.ok) {
+        if (!res.body) { reportKeyFailure('agnes', apiKey, 'No body'); continue; }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let lastUsage: any = null;
+        let anyContent = false;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') {
+              reportKeySuccess('agnes', apiKey, Date.now() - start);
+              // usage 必须是独立的 type:'usage' 事件。
+              // 原先是把它挂在 chunk.usage 上发出去，而 chat.ts 的 chunk
+              // 分支只读 content/model —— 那个字段根本没人消费，于是
+              // Agnes 路径的真实 token 一直是丢的，最后记 0。
+              if (lastUsage) yield { type: 'usage', usage: lastUsage };
+              return;
+            }
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.usage) lastUsage = parsed.usage;
+              const delta = parsed.choices?.[0]?.delta?.content;
+              if (delta) { anyContent = true; yield { type: 'chunk', content: delta, model: 'agnes' }; }
+            } catch {}
+          }
+        }
         reportKeySuccess('agnes', apiKey, Date.now() - start);
-        const body: any = await res.json().catch(() => null);
-        const content = body?.choices?.[0]?.message?.content || '';
-        const usage = body?.usage || null;
-        if (content) yield { type: 'chunk', content, model: 'agnes', usage };
+        if (lastUsage) yield { type: 'usage', usage: lastUsage };
+        // 流被对端静默关闭且一个 delta 都没给：同样算失败，走外层重试。
+        if (!anyContent) { reportKeyFailure('agnes', apiKey, 'empty stream'); continue; }
         return;
       }
       if (res.status === 429 || (res.status as number) >= 500) { reportKeyFailure('agnes', apiKey, `HTTP ${res.status}`); continue; }

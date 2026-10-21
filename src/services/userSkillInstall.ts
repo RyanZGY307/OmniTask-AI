@@ -165,10 +165,55 @@ function ghApiPath(path: string): string {
   return path ? path : '';
 }
 
+// GitHub 内容/目录响应可能很大（大仓库的目录树几 MB 是常态）。两段式：
+//   · 带 If-None-Match 发条件请求 —— 内容没变时 GitHub 回 304，body 为空，
+//     连解析都不必发生；
+//   · 变了才把解析结果连同 ETag 一起缓存（TTL 略短于 GitHub 的缓存窗口），
+//     后续同内容命中内存，也不再请求上游。
+// 旧方案是每次都全量拉取 + 整段 r.json()。
+const GH_ETAG_TTL_MS = 5 * 60 * 1000;
+const ghEtagCache = new Map<string, { etag: string; body: any; expiresAt: number }>();
+
 async function ghGet(path: string, token?: string): Promise<{ status: number; json: () => Promise<any>; text: () => Promise<string> }> {
   const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetchWithTimeout(`https://api.github.com/${ghApiPath(path)}`, { headers });
+  const url = `https://api.github.com/${ghApiPath(path)}`;
+
+  // 内存命中：内容未过期，直接虚构一个 200 响应，不请求上游。
+  const cached = ghEtagCache.get(path);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      status: 200,
+      json: async () => cached.body,
+      text: async () => JSON.stringify(cached.body),
+    } as any;
+  }
+
+  if (cached) headers['If-None-Match'] = cached.etag;
+
+  const res = await fetchWithTimeout(url, { headers });
+
+  // 304 = 内容未变：刷新 TTL，用缓存体重放一次，body 与解析都不发生。
+  if (res.status === 304 && cached) {
+    cached.expiresAt = Date.now() + GH_ETAG_TTL_MS;
+    return {
+      status: 200,
+      json: async () => cached.body,
+      text: async () => JSON.stringify(cached.body),
+    } as any;
+  }
+
+  // 200：解析一次，把 ETag 与新 body 一起留档；无 ETag 的响应不缓存。
+  if (res.status === 200) {
+    const etag = res.headers.get('etag');
+    if (etag) {
+      const body = await res.clone().json();
+      ghEtagCache.set(path, { etag, body, expiresAt: Date.now() + GH_ETAG_TTL_MS });
+      if (ghEtagCache.size > 200) {
+        for (const [k, v] of ghEtagCache) if (v.expiresAt <= Date.now()) ghEtagCache.delete(k);
+      }
+    }
+  }
   return res as any;
 }
 
