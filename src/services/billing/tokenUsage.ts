@@ -1,21 +1,18 @@
 // ================================================================
 // Token Usage Integration — the chat-path entry point.
 //
-//   provider usage → actual tokens → verified output limit →
-//   calculateBilling (display + overflow) → credit deduction
+//   provider usage → 真实 token → credit deduction
 //   (Postgres transaction + retry) → TokenUsage row → user view.
 //
-// The user-facing view NEVER includes actual tokens, multiplier,
-// overflow, model limits, source, verifiedAt, or headroom.
+// 展示与扣费读同一组真实值。放大乘数、overflow 转移、防反推取整均已删除，
+// 见 tokenBilling.ts 文件头。
 // ================================================================
 
 import { prismaUser, withRetry } from '../db';
 import {
   calculateBilling,
   deductCredits,
-  applyAntiReverseRounding,
   normalizeMode,
-  multiplierFor,
   type ChatMode,
   type BillingResult,
   type LimitSource,
@@ -142,14 +139,14 @@ export async function processTokenUsage(input: TokenUsageInput): Promise<UserTok
   const actualOutput = Math.max(0, Math.floor(input.providerUsage.outputTokens || 0));
 
   // 1) Verified output limit (cache read only — never discover here).
+  //    保留调用：limit 仍作为模型元数据记录，但**不再参与任何数值计算**。
   const verifiedOutputLimit = await getVerifiedOutputLimit(input.modelKey).catch(() => null);
 
-  // 2) Billing (display + overflow transfer).
-  const billing = calculateBilling(actualInput, actualOutput, mode, verifiedOutputLimit);
+  // 2) 唯一一次换算：真实 token → 计费口径（无放大、无转移、无取整）。
+  const display = calculateBilling(actualInput, actualOutput, mode, verifiedOutputLimit);
 
-  // 3) Anti-reverse-engineering rounding before the user sees anything.
-  const display = applyAntiReverseRounding(billing);
-  const multiplier = multiplierFor(mode);
+  // 3) 倍率已废除，落库固定为 1；列保留以免动表结构。
+  const multiplier = 1;
 
   // 4) Model limit provenance.
   const row = await getModelLimitRow(input.modelKey).catch(() => null);
@@ -162,7 +159,8 @@ export async function processTokenUsage(input: TokenUsageInput): Promise<UserTok
     modelVersion: row?.version ?? null,
     actualInput,
     actualOutput,
-    billing,
+    // display* 与实际值恒等，写同一个结果。
+    billing: display,
     mode,
     multiplier,
     verifiedOutputLimit,
@@ -170,12 +168,12 @@ export async function processTokenUsage(input: TokenUsageInput): Promise<UserTok
     limitVerifiedAt: row?.verifiedAt?.toISOString() ?? null,
   });
 
-  // 5) Credit deduction (display-based) inside a retried transaction.
+  // 5) Credit deduction — 用真实 token 换算，不再读放大后的中间值。
   const creditsUsed = deductCredits(display, input.modelKey);
   await withRetry(() => deductUserCredits(input.userId, creditsUsed, usageData), 3, 'deductUserCredits');
 
-  // 6) User view — display values + credits only. No actual/multiplier/
-  //    limit/source/headroom leaks.
+  // 6) 用户视图：只给 token 与积分。字段名沿用 display*，
+  //    值已与真实消耗一致。
   return {
     tokenUsage: {
       displayInput: display.displayInput,

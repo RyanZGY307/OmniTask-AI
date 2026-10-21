@@ -98,10 +98,14 @@ router.post('/models/fetch-list', adminAuth, async (req: AuthRequest, res: Respo
 });
 
 // ================================================================
-// Admin Token-Usage View — the ONLY place ACTUAL + DISPLAY coexist.
-// The user-facing path returns display-only (UserTokenView). This
-// endpoint is admin-gated and exposes providerActual, billingDetail,
-// and modelLimit provenance for cost analysis / model evolution.
+// Admin Token-Usage View — cost analysis + model limit provenance.
+//
+// ⚠️ 单轨制：providerActual 与 userVisible 现在是同一组数字。原先是
+// 「ACTUAL（真实）vs DISPLAY（按模式乘数放大后给用户看并用于扣费）」双轨，
+// 本端点因此是唯一同时暴露两轨的地方。放大机制已整体删除，用户看到的
+// 就是 provider 回传的真实 token，故两轨合并为一段说明性字段。
+// 已删除的 billingDetail（multiplier / overflowTransferred /
+// overflowAmount）恒为 1 / false / 0，不再有信息量，一并移除。
 // ================================================================
 
 export interface AdminTokenView {
@@ -111,21 +115,18 @@ export interface AdminTokenView {
     mode: string;
     timestamp: string;
   };
+  // provider 回传的真实 token。用户看到的就是这个数。
   providerActual: {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
   };
-  userDisplay: {
+  // 保留字段以兼容既有前端，值恒等于 providerActual。
+  userVisible: {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
     creditsUsed: number;
-  };
-  billingDetail: {
-    multiplier: number;
-    overflowTransferred: boolean;
-    overflowAmount: number;
   };
   modelLimit: {
     outputTokenLimit: number | null;
@@ -158,16 +159,11 @@ router.get('/token-usage/:messageId', adminAuth, async (req: AuthRequest, res: R
         outputTokens: usage.actualOutputTokens,
         totalTokens: usage.actualTotalTokens,
       },
-      userDisplay: {
+      userVisible: {
         inputTokens: usage.displayInputTokens,
         outputTokens: usage.displayOutputTokens,
         totalTokens: usage.displayTotalTokens,
         creditsUsed: 0, // credits live on Message.creditsCost; see /messages
-      },
-      billingDetail: {
-        multiplier: usage.multiplier,
-        overflowTransferred: usage.overflowTransferred,
-        overflowAmount: usage.overflowAmount,
       },
       modelLimit: {
         outputTokenLimit: limit,
@@ -183,7 +179,7 @@ router.get('/token-usage/:messageId', adminAuth, async (req: AuthRequest, res: R
   }
 });
 
-// Per-user consumption summary — display-only, no actual tokens.
+// Per-user consumption summary. 真实 token：display* 与实际值已统一。
 router.get('/token-usage/user/:userId', adminAuth, async (req: AuthRequest, res: Response) => {
   try {
     const userId = String(req.params.userId);
@@ -192,16 +188,18 @@ router.get('/token-usage/user/:userId', adminAuth, async (req: AuthRequest, res:
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
-    const totalDisplay = rows.reduce((s, r) => s + r.displayTotalTokens, 0);
+    // displayTotalTokens 列现与 actualTotalTokens 写同一个数（见
+    // services/billing/tokenBilling.ts 文件头）。改用 actual* 读，语义明确。
+    const totalTokens = rows.reduce((s, r) => s + r.actualTotalTokens, 0);
     res.json({
       userId,
       sampleSize: rows.length,
-      totalDisplayTokens: totalDisplay,
+      totalTokens,
       records: rows.map((r) => ({
         messageId: r.messageId,
         model: r.model,
         mode: r.mode,
-        displayTotal: r.displayTotalTokens,
+        totalTokens: r.actualTotalTokens,
         createdAt: r.createdAt.toISOString(),
       })),
     });

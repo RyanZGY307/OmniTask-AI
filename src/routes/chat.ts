@@ -495,7 +495,10 @@ async function buildAgentChat(
     selected_atoms: prResult?.composition?.selected_atoms,
     removed_atoms: prResult?.composition?.removed_atoms,
     conflicts: prResult?.conflictResult?.conflicts,
-    system_tokens: finalSystemPrompt.length / 3,
+    // 该字段是**提示词大小的粗估**（chars/3），用于 prompt 运行时可观测，
+    // 不是 token 消耗统计，也不参与扣费。字段名带 _estimated 以正名：
+    // 观测面板上的任何数字都该能自证是实测还是估算。
+    system_tokens_estimated: Math.ceil(finalSystemPrompt.length / 3),
   }, prResult ? 'success' : 'degraded');
 
   await addEvent(traceId, 'VALIDATION', {
@@ -810,11 +813,14 @@ router.post('/', authMiddleware, rateLimit(60000, 30), async (req: AuthRequest, 
 
       maybeGenerateConversationTitle(conversation.id, message).catch(() => {});
 
+      // 真实 token：只在 provider 明确回传输入/输出时才记录；
+      // 拆不了就留空（界面显示未知），不再按 70%/30% 编造拆分。
+      const drTotal = result.tokensUsed || 0;
       await completeTrace(traceId, {
         status: 'SUCCESS', selectedModel: 'deep-research',
-        totalTokens: result.tokensUsed || 0,
-        inputTokens: result.tokensUsed ? Math.floor(result.tokensUsed * 0.7) : undefined,
-        outputTokens: result.tokensUsed ? Math.ceil(result.tokensUsed * 0.3) : undefined,
+        totalTokens: drTotal,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
       });
 
       return res.json({ conversation, research: result });
@@ -922,7 +928,12 @@ router.post('/', authMiddleware, rateLimit(60000, 30), async (req: AuthRequest, 
         break;
       } else if (chunk.type === 'done') {
         if (chunk.model) usedModel = chunk.model;
-        tokenCount = chunk.tokens || Math.ceil(fullContent.length / 3);
+        // 真实 token：只认 provider 回传的 chunk.tokens。
+        // 原先是 `|| Math.ceil(fullContent.length / 3)` —— 用字符数除 3 估一个
+        // token 数出来。这是整套假 token 显示的源头：用户看到的"已用 token"
+        // 其实是把输出文本长度除了个数，与真实计费口径完全脱节。现在没有
+        // provider 数据就记 0，缺口显示为 0/未知，不再编造。
+        tokenCount = chunk.tokens || 0;
       }
     }
 
@@ -951,8 +962,11 @@ router.post('/', authMiddleware, rateLimit(60000, 30), async (req: AuthRequest, 
     // Bill the model that actually produced the output (fallback may switch models)
     const usedModelInfo = (getDynamicModels() as any)[usedModel] || agent.modelInfo;
     const costPer1k = usedModelInfo.costPer1k || 0;
-    const inputTokens = providerUsage?.prompt_tokens ?? Math.floor(tokenCount * 0.7);
-    const outputTokens = providerUsage?.completion_tokens ?? (tokenCount - inputTokens);
+    // 关键：provider 没回 usage 时，绝不按 70%/30% 编造输入输出拆分。
+    // tokenCount 本身也只来自 providerUsage.total_tokens（见本函数上方），
+    // 没有 usage 就是 0 —— 0 是诚实的，伪造的拆分不是。
+    const inputTokens = providerUsage?.prompt_tokens;
+    const outputTokens = providerUsage?.completion_tokens;
     const apiCost = tokenCount * costPer1k / 1000;
 
     await addModelCall(traceId, {
@@ -1582,7 +1596,12 @@ router.post('/:id/messages', authMiddleware, rateLimit(60000, 30), async (req: A
         break;
       } else if (chunk.type === 'done') {
         if (chunk.model) usedModel = chunk.model;
-        tokenCount = chunk.tokens || Math.ceil(fullContent.length / 3);
+        // 真实 token：只认 provider 回传的 chunk.tokens。
+        // 原先是 `|| Math.ceil(fullContent.length / 3)` —— 用字符数除 3 估一个
+        // token 数出来。这是整套假 token 显示的源头：用户看到的"已用 token"
+        // 其实是把输出文本长度除了个数，与真实计费口径完全脱节。现在没有
+        // provider 数据就记 0，缺口显示为 0/未知，不再编造。
+        tokenCount = chunk.tokens || 0;
       }
     }
 
@@ -1608,8 +1627,11 @@ router.post('/:id/messages', authMiddleware, rateLimit(60000, 30), async (req: A
 
     updateSession(agent.session.sessionId, { status: finishReason === 'stop' ? 'completed' : 'failed', tokensUsed: tokenCount });
 
-    const inputTokens = providerUsage?.prompt_tokens ?? Math.floor(tokenCount * 0.7);
-    const outputTokens = providerUsage?.completion_tokens ?? (tokenCount - inputTokens);
+    // 关键：provider 没回 usage 时，绝不按 70%/30% 编造输入输出拆分。
+    // tokenCount 本身也只来自 providerUsage.total_tokens（见本函数上方），
+    // 没有 usage 就是 0 —— 0 是诚实的，伪造的拆分不是。
+    const inputTokens = providerUsage?.prompt_tokens;
+    const outputTokens = providerUsage?.completion_tokens;
     const usedModelInfo2 = (getDynamicModels() as any)[usedModel] || agent.modelInfo;
     const costPer1k2 = usedModelInfo2.costPer1k || 0;
     const apiCost = tokenCount * costPer1k2 / 1000;

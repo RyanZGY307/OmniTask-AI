@@ -63,7 +63,12 @@ export async function* chatWithFallback(
       if (!yieldedChunk && !anyProviderKey()) {
         const reply = buildOfflineReply(messages);
         yield { type: 'chunk', content: reply, model: 'offline-mock' };
-        yield { type: 'done', model: 'offline-mock', tokens: Math.max(1, Math.ceil(reply.length / 2)) };
+        // 真实 token：离线兜底**没有发生任何真实模型调用**，故 tokens 记 0。
+        // 原先是 Math.max(1, Math.ceil(reply.length / 2)) —— 把回复文本长度
+        // 除 2 造一个数，而这个数会经 chat.ts 的 chunk.tokens 流进
+        // tokenCount → 用量统计 → 积分扣除。等于在"没有调用任何模型"的
+        // 情况下向用户收 token 费。现在诚实地记 0。
+        yield { type: 'done', model: 'offline-mock', tokens: 0 };
         return;
       }
       // 面向用户的错误文案：不暴露内部模型名/调用细节。

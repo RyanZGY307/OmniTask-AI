@@ -2220,18 +2220,31 @@ model TokenUsage {
   provider            String
   mode                String   @default("standard")
   multiplier          Float    @default(1)
+  // overflow 转移已废除，恒 false / 0。仅作历史数据兼容保留。
   overflowTransferred Boolean  @default(false)
   overflowAmount      Int      @default(0)
+  // ---- 真实 token（provider 回传） ----
   actualInputTokens   Int      @default(0)
   actualOutputTokens  Int      @default(0)
   actualTotalTokens   Int      @default(0)
+  // ---- 历史列：双轨制废除后与上面三个写同一个数 ----
+  // 曾按模式乘数放大（standard ×1.1 / thinking ×1.2）并做 overflow 转移、
+  // 防反推取整，用于「展示给用户 + 扣积分」。该机制已整体删除，前缀
+  // display* 只为不改动表结构而保留，取值恒等于同组 actual*。
+  // 删列需要一次数据迁移（见提交说明的已知限制），故暂留。
   displayInputTokens  Int      @default(0)
   displayOutputTokens Int      @default(0)
   displayTotalTokens  Int      @default(0)
+  // 倍率已废除，落库恒为 1。仅作历史数据兼容保留。
+  multiplier          Float    @default(1)
   modelVersion        String?
   verifiedOutputLimit Int?
   limitSource         String?
   limitVerifiedAt     DateTime?
+  // ---- 从未写入的死列（历史遗留） ----
+  // 这三个与最上方的 actual* 完全重复，全仓无任何代码写入；
+  // cacheHit/Miss 亦然（曾用于一个永远是 0 的「缓存命中率」指标）。
+  // 清理需一次数据迁移，暂留并在此标注，避免后人误以为它们在用。
   inputTokens         Int      @default(0)
   outputTokens        Int      @default(0)
   totalTokens         Int      @default(0)

@@ -1,46 +1,50 @@
 // ================================================================
-// Token Billing — Actual vs Display two-token separation.
+// Token Billing — 单轨：展示与扣费一律用 provider 回传的真实 token
+// ================================================================
+// 【历史】本模块曾是「Actual / Display 双轨」：
+//   ACTUAL  = provider 原始 usage，仅后端成本分析使用，永不展示。
+//   DISPLAY = 按模式乘数把输出放大后的值（standard ×1.1、thinking ×1.2），
+//             展示给用户并用于扣积分，超限部分还会从 output 转移到 input，
+//             且再过一遍把显示值取整到 10/50 的「防反推」取整。
+// 即用户在用量页看到的数字并不是自己消耗的 token。
 //
-//   ACTUAL  = raw provider usage. Immutable. Backend cost analysis,
-//             model evolution, latency, quality. NEVER shown to user.
-//   DISPLAY = inflation-multiplier-adjusted consumption. Shown to user
-//             and used for credit deduction. NEVER used for cost.
+// 该机制已整体移除。现在**只有一条轨道**：provider 回传多少就是多少，
+// 展示、扣费、成本核算读同一个数。调用方拿到的 display* 字段与实际值
+// 恒等，字段名保留只为不改动数据库列与既有查询。
 //
-// Only OUTPUT tokens are inflated (except overflow transfer). Input is
-// never inflated. The 20% ceiling is a hard system limit.
+// 移除的四种造假，逐条对应：
+//   1. 模式乘数放大（MODE_MULTIPLIER / multiplierFor）— 删除。
+//   2. 超限 overflow 从 output 转移到 input — 删除。
+//   3. 防反推取整（deterministicRound / applyAntiReverseRounding）—
+//      显示值不再等于真实消耗，删除。
+//   4. provider 未回 usage 时按 70%/30% 伪造拆分（在 routes/chat.ts）—
+//      改为「没有就不写」，不再编一个数字。
 //
-// All pure functions here are deterministic — no randomness, no I/O.
+// 保留：
+//   · calculateBilling 仍接受 mode/verifiedOutputLimit 参数，是为了不牵动
+//     所有调用点的签名；这两个参数现在不再影响任何数值。
+//   · overflowTransferred / overflowAmount 恒为 false/0，字段保留同因。
+//   · TokenUsage 表里的 actual* 与 display* 列都仍在写，且写同一组真实值；
+//     彻底删列需要一次迁移，本提交不动表结构（见提交说明的已知限制）。
+//
+// 所有函数都是纯函数：无随机、无 I/O、可确定性复现。
 // ================================================================
 
 import { MODEL_REGISTRY, type ModelRegistryEntry } from '../../config';
 import { getDynamicModels } from '../configSync';
 
-// Three chat modes. fast is the baseline (no inflation); standard +10%;
-// thinking +20%. MAX_ALLOWED_MULTIPLIER is a defensive hard cap — the
-// actual runtimes never exceed it, it exists to guard the registry.
-export const MODE_MULTIPLIER = {
-  fast: 1.0,
-  standard: 1.1,
-  thinking: 1.2,
-} as const;
+// 模式名仍是合法元数据（用于统计「哪种模式被用了多少次」），
+// 但它**不再改变任何 token 数值**。
+export type ChatMode = 'fast' | 'standard' | 'thinking';
 
-export type ChatMode = keyof typeof MODE_MULTIPLIER;
-
-export const MAX_ALLOWED_MULTIPLIER = 1.2;
-
-// Invalid / unknown modes fall back to fast (multiplier 1.0).
+// 未知/非法模式归为 fast。仅作归一化，不涉及放大。
 export function normalizeMode(mode: string | undefined | null): ChatMode {
-  if (mode && mode in MODE_MULTIPLIER) return mode as ChatMode;
+  if (mode === 'fast' || mode === 'standard' || mode === 'thinking') return mode;
   return 'fast';
 }
 
-export function multiplierFor(mode: ChatMode): number {
-  const m = MODE_MULTIPLIER[mode] ?? MODE_MULTIPLIER.fast;
-  // Defensive: never exceed the hard system ceiling.
-  return Math.min(m, MAX_ALLOWED_MULTIPLIER);
-}
-
 export interface BillingResult {
+  // 这三个字段与实际消耗恒等（见文件头说明，字段名保留是为不动 DB 列）。
   displayInput: number;
   displayOutput: number;
   displayTotal: number;
@@ -48,95 +52,36 @@ export interface BillingResult {
   overflowAmount: number;
 }
 
-// Core engine: convert actual provider tokens into user-visible
-// consumption. Deterministic.
+/**
+ * 把 provider 回传的真实 token 规整为计费口径。
+ *
+ * 只做两件事，且都与「不造假」有关：
+ *   · 挡住负数 / NaN / 小数（Provider 偶发返回垃圾值）
+ *   · 向下取整到整数 token
+ *
+ * mode 与 verifiedOutputLimit 不再影响结果：放大与转移逻辑已删除。
+ */
 export function calculateBilling(
   actualInput: number,
   actualOutput: number,
-  mode: ChatMode,
-  verifiedOutputLimit: number | null,
+  _mode: ChatMode,
+  _verifiedOutputLimit: number | null,
 ): BillingResult {
-  // Defend against negative / NaN provider values.
   const inp = Math.max(0, Math.floor(Number.isFinite(actualInput) ? actualInput : 0));
   const out = Math.max(0, Math.floor(Number.isFinite(actualOutput) ? actualOutput : 0));
-
-  const multiplier = multiplierFor(mode);
-
-  // 1) fast mode: return actuals verbatim — the baseline is never inflated.
-  if (mode === 'fast') {
-    return {
-      displayInput: inp,
-      displayOutput: out,
-      displayTotal: inp + out,
-      overflowTransferred: false,
-      overflowAmount: 0,
-    };
-  }
-
-  // 2) Unknown model limit: no inflation. 宁少不多 (charge less, never more).
-  if (verifiedOutputLimit === null || !Number.isFinite(verifiedOutputLimit) || verifiedOutputLimit <= 0) {
-    return {
-      displayInput: inp,
-      displayOutput: out,
-      displayTotal: inp + out,
-      overflowTransferred: false,
-      overflowAmount: 0,
-    };
-  }
-
-  // 3) Inflate output only. Math.ceil ensures whole tokens.
-  const inflatedOutput = Math.min(Math.ceil(out * multiplier), Number.MAX_SAFE_INTEGER);
-
-  // 4) Within limit: inflate normally, output only.
-  if (inflatedOutput <= verifiedOutputLimit) {
-    return {
-      displayInput: inp,
-      displayOutput: inflatedOutput,
-      displayTotal: inp + inflatedOutput,
-      overflowTransferred: false,
-      overflowAmount: 0,
-    };
-  }
-
-  // 5) Overflow: cap output at the limit, transfer the surplus to input.
-  //    displayTotal is invariant = actualInput + inflatedOutput.
-  const overflow = inflatedOutput - verifiedOutputLimit;
   return {
-    displayInput: inp + overflow,
-    displayOutput: verifiedOutputLimit,
-    displayTotal: inp + inflatedOutput,
-    overflowTransferred: true,
-    overflowAmount: overflow,
+    displayInput: inp,
+    displayOutput: out,
+    displayTotal: inp + out,
+    overflowTransferred: false,
+    overflowAmount: 0,
   };
 }
 
-// Anti-reverse-engineering: deterministic rounding (no randomness).
-// Same input always yields the same result. Used on display values
-// before they reach the user so the exact multiplier is not recoverable
-// from token counts.
-export function deterministicRound(tokens: number): number {
-  const n = Math.max(0, Math.floor(tokens));
-  if (n < 100) return n;
-  if (n < 1000) return Math.ceil(n / 10) * 10;
-  return Math.ceil(n / 50) * 50;
-}
-
-// Apply anti-reverse-engineering rounding to a billing result and
-// re-sum displayTotal so the total stays consistent.
-export function applyAntiReverseRounding(result: BillingResult): BillingResult {
-  const displayInput = deterministicRound(result.displayInput);
-  const displayOutput = deterministicRound(result.displayOutput);
-  return {
-    ...result,
-    displayInput,
-    displayOutput,
-    displayTotal: displayInput + displayOutput,
-  };
-}
-
-// Credit deduction always uses displayTotal; cost accounting always uses
-// actualTotal. This is the single point where display tokens convert to
-// credits.
+/**
+ * token → 积分。唯一的换算点。
+ * 入参是**真实** token；本函数不再从任何放大后的中间值取值。
+ */
 export function deductCredits(result: BillingResult, modelKey: string): number {
   const modelInfo: ModelRegistryEntry | undefined =
     (getDynamicModels()[modelKey] as ModelRegistryEntry) ?? (MODEL_REGISTRY as Record<string, ModelRegistryEntry>)[modelKey];
@@ -145,27 +90,23 @@ export function deductCredits(result: BillingResult, modelKey: string): number {
   return Math.ceil((result.displayTotal / 1000) * costPer1k);
 }
 
-// Record persisted to TokenUsage (see schema-user.prisma). actualTotal =
-// actualInput + actualOutput; displayTotal = displayInput + displayOutput.
-// The two totals may diverge under overflow transfer.
+// Record persisted to TokenUsage (see schema-user.prisma).
+// actualTotal === displayTotal 恒成立（双轨已合并，见文件头）。
 export interface TokenUsageRecord {
-  // ===== Actual (backend-only) =====
   actualInputTokens: number;
   actualOutputTokens: number;
   actualTotalTokens: number;
 
-  // ===== Display (user-facing + deduction) =====
+  // 以下四个字段为保留的历史列名，值与上一组相同。
   displayInputTokens: number;
   displayOutputTokens: number;
   displayTotalTokens: number;
 
-  // ===== Billing metadata =====
   mode: ChatMode;
   multiplier: number;
   overflowTransferred: boolean;
   overflowAmount: number;
 
-  // ===== Model limit provenance =====
   model: string;
   modelVersion?: string | null;
   verifiedOutputLimit: number | null;
