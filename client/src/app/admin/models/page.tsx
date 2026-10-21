@@ -4,11 +4,13 @@
 // 免费 / Pro 供应商「完全分离」，各自独立配置：
 //   名称 · 完整URL（不再拼接）· API KEY（无数量上限）· 模型 · 积分（Pro）
 //   三类速率限制：单API / 运营商 / 调用模型
-// 模型只能在此添加/删除；用户端对话面板按此列表显示。
+// 模型可在此添加/删除/改价（改价走 PUT /admin/models/:modelKey，只传价格，
+//   不重传其余字段，也不会把误改的字段写成默认值）。
+// 用户端对话面板按此列表显示。
 // ================================================================
 
 import { useEffect, useState } from 'react';
-import { apiGet, apiPost, apiDelete } from '@/lib/api';
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 
 type Tier = 'FREE' | 'PRO';
 
@@ -150,6 +152,36 @@ export default function AdminModelsPage() {
     if (!confirm(`删除模型 ${k}？`)) return;
     try { await apiDelete(`/admin/models/${encodeURIComponent(k)}`); flash(`模型 ${k} 已删除`); refresh(); }
     catch (e: any) { flash(`删除失败：${e?.message || ''}`); }
+  };
+
+  // ============ 改价（不删模型，直接 PUT 覆盖价格） ============
+  // 旧做法只能改完后用添加表单重新 POST，而 POST 是 upsert、需带全部字段，
+  // 等于让人把厂商/限额/能力之类一并重填一遍，漏填的会写成默认值。
+  //
+  // 只改一个模型的价格时，先全量拉本地拼 body 成本太高；让服务端接受部分字段，
+  // 前端便只需传 costPer1M 与 tier。
+  const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
+  const [savingPrice, setSavingPrice] = useState<string | null>(null);
+
+  const editModelPrice = async (m: ModelRow) => {
+    const raw = priceEdits[m.modelKey];
+    if (raw === undefined) return;
+    const v = raw.trim() === '' ? 0 : Number(raw);
+    if (!Number.isFinite(v) || v < 0) { flash('价格必须是非负数字'); return; }
+    setSavingPrice(m.modelKey);
+    try {
+      // 只传要改的字段：后端 update 分支保证未传字段不变。
+      await apiPut(`/admin/models/${encodeURIComponent(m.modelKey)}`, {
+        tier: m.tier,
+        costPer1M: m.tier === 'FREE' ? 0 : v,
+      });
+      // 本地同步，避免 render() 全量刷新后表格闪白
+      setModels((prev) => prev.map((x) => (x.modelKey === m.modelKey
+        ? { ...x, costPer1k: m.tier === 'FREE' ? 0 : v / 1000 }
+        : x)));
+      flash(`${m.displayName || m.modelKey} 价格已更新`);
+    } catch (e: any) { flash(`改价失败：${e?.message || ''}`); }
+    finally { setSavingPrice(null); }
   };
 
   const tConns = connections.filter((c) => c.tier === tier);
@@ -323,7 +355,29 @@ export default function AdminModelsPage() {
                   <td className="px-4 py-2.5 text-xs font-mono text-primary" data-label="模型">{m.apiModel || m.modelKey}</td>
                   <td className="px-4 py-2.5 text-xs text-muted" data-label="厂商">{m.vendor || autoVendor(m.provider)}</td>
                   <td className="px-4 py-2.5 text-xs text-muted font-mono" data-label="Provider">{m.provider}</td>
-                  <td className="px-4 py-2.5 text-xs text-muted" data-label="积分/1M">{m.costPer1k > 0 ? `［${Math.round(m.costPer1k * 1000)}♦︎］` : '免费'}</td>
+                  <td className="px-4 py-2.5 text-xs text-muted" data-label="积分/1M">
+                    {m.tier === 'FREE' ? (
+                      <span className="text-muted">免费</span>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          defaultValue={Math.round(m.costPer1k * 1000)}
+                          onChange={(e) => setPriceEdits((p) => ({ ...p, [m.modelKey]: e.target.value }))}
+                          className={`${inputCls} !w-24 !px-2 !py-1 text-xs`}
+                          placeholder="0"
+                        />
+                        <button
+                          onClick={() => editModelPrice(m)}
+                          disabled={savingPrice === m.modelKey || priceEdits[m.modelKey] === undefined}
+                          className="text-[11px] px-2 py-1.5 rounded-capsule border border-border text-muted hover:text-accent hover:border-accent/40 disabled:opacity-40">
+                          {savingPrice === m.modelKey ? '保存中…' : '保存价格'}
+                        </button>
+                      </div>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-xs text-muted" data-label="限额">{hasLimit(m.rateLimit) ? '有限额' : '—'}</td>
                   <td className="px-4 py-2.5 text-right" data-label="操作">
                     <button onClick={() => delModel(m.modelKey)}

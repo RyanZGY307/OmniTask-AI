@@ -616,6 +616,103 @@ router.delete('/models/:modelKey', adminAuth, async (req: AuthRequest, res: Resp
   } catch { res.status(500).json({ error: '删除失败' }); }
 });
 
+// 修改已存在模型的配置（含 API 价格）。
+//
+// 为什么需要它：POST /models 是 upsert 且 displayName 必填，因此"只想改价格"
+// 也必须重传全部字段；而管理页此前只提供添加/删除，导致改价的唯一途径是
+// 删除后重建——这会丢掉 usage 历史关联、限流作用域与用户已选的模型。
+// 同文件的 PUT /credit-packs/:id、PUT /users/:id 已是本项目的编辑范式。
+//
+// 与 POST /models 的关键差异：
+//   1. 用 update 而非 upsert —— modelKey 不存在就 404，不会顺手创建新模型。
+//   2. 全部字段可省略 —— 只提交要改的项，未提交的保持原值不变。
+//   3. modelKey 不可改（它是身份，不是配置）。
+//   4. 拒绝空请求体，避免误调用把整行写成默认值。
+router.put('/models/:modelKey', adminAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const key = String(req.params.modelKey);
+
+    const {
+      modelKey: _ignoredKey,   // 显式忽略：不允许通过本端点改身份
+      id: _ignoredId,
+      displayName, vendor, tier, maxTokens, contextWindow,
+      costPer1k, costPer1M, category, status, enabled,
+      capabilities, supportsReasoning, supportsTools, supportsVision,
+      supportsStreaming, supportsStructuredOutput,
+      qualityProfile, speedProfile, reliabilityProfile, rateLimit,
+    } = req.body || {};
+
+    // 至少要有一样可改的，否则视为误调用。
+    const hasAny = [displayName, vendor, tier, maxTokens, contextWindow, costPer1k,
+      costPer1M, category, status, enabled, capabilities, supportsReasoning,
+      supportsTools, supportsVision, supportsStreaming, supportsStructuredOutput,
+      qualityProfile, speedProfile, reliabilityProfile, rateLimit]
+      .some((v) => v !== undefined);
+    if (!hasAny) return res.status(400).json({ error: '没有提供任何可修改字段' });
+
+    // API 价格：管理端用「积分/1M」为单位，注册表用「积分/1k」。
+    // FREE 档模型固定为 0——否则用户端"免费"标签与实际计费不一致。
+    let cost1k: number | undefined;
+    if (costPer1M !== undefined || costPer1k !== undefined) {
+      const raw = costPer1M !== undefined ? Number(costPer1M) / 1000 : Number(costPer1k);
+      if (!Number.isFinite(raw) || raw < 0) {
+        return res.status(400).json({ error: '价格必须是非负数字' });
+      }
+      cost1k = raw;
+    }
+
+    // 校验要改的字段存在（update 在缺失时抛 P2025，需转成 404）。
+    const existing = await prisma.modelConfig.findUnique({ where: { modelKey: key } }).catch(() => null);
+    if (!existing) return res.status(404).json({ error: `模型不存在：${key}` });
+
+    const capStr = capabilities !== undefined
+      ? JSON.stringify(Array.isArray(capabilities) ? capabilities : [capabilities])
+      : undefined;
+    const rateLimitStr = rateLimit !== undefined
+      ? (rateLimit && Object.keys(rateLimit).length ? JSON.stringify(rateLimit) : '')
+      : undefined;
+
+    const nextTier = tier !== undefined ? String(tier) : existing.tier;
+    const effectiveCost = cost1k !== undefined ? cost1k
+      : existing.costPer1k;
+
+    const updated = await prisma.modelConfig.update({
+      where: { modelKey: key },
+      data: {
+        displayName: displayName !== undefined ? String(displayName) : undefined,
+        vendor: vendor !== undefined ? String(vendor) : undefined,
+        tier: nextTier,
+        maxTokens: maxTokens !== undefined ? Number(maxTokens) : undefined,
+        contextWindow: contextWindow !== undefined ? Number(contextWindow) : undefined,
+        // FREE 档强制 0，防止"免费"标签与真实计费脱节
+        costPer1k: nextTier === 'FREE' ? 0 : effectiveCost,
+        category: category !== undefined ? String(category) : undefined,
+        status: status !== undefined ? String(status) : undefined,
+        enabled: enabled !== undefined ? enabled : undefined,
+        capabilities: capStr,
+        supportsReasoning: supportsReasoning,
+        supportsTools: supportsTools,
+        supportsVision: supportsVision,
+        supportsStreaming: supportsStreaming,
+        supportsStructuredOutput: supportsStructuredOutput,
+        qualityProfile: qualityProfile,
+        speedProfile: speedProfile,
+        reliabilityProfile: reliabilityProfile,
+        rateLimit: rateLimitStr,
+      },
+    });
+
+    // 价格/厂商等信息都是运行时从注册表读的，改了必须热加载。
+    const { refreshModelConfigs } = await import('../services/configSync');
+    await refreshModelConfigs();
+
+    res.json({ success: true, modelKey: key, model: updated });
+  } catch (err: any) {
+    if (err?.code === 'P2025') return res.status(404).json({ error: '模型不存在' });
+    res.status(500).json({ error: err.message || '更新失败' });
+  }
+});
+
 router.get('/credit-packs', adminAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { getDynamicPacks } = await import('../services/configSync');
