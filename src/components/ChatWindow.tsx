@@ -43,7 +43,7 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
     currentMessages, isLoadingMessages, isStreaming, streamingContent,
     currentMode, currentModel, modelSwitchNotice, creditBalance, toastMessage,
     researchProgress, queueStatus, contextCompression,
-    hasMoreOlder, isLoadingOlder,
+    hasMoreOlder, isLoadingOlder, hasMoreNewer, isLoadingNewer,
   } = store;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -109,16 +109,51 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
 
   const closeSearch = () => { setSearchOpen(false); setSearchQuery(''); setSearchIndex(0); };
 
+  // 首屏只加载最近 10 条；向上/下翻到边缘时自动再取一页。
+  // pendingScroll 记录"这次 DOM 变化是哪一侧插入的"，供下面的 effect 决定
+  // 视口怎么处理 —— 头部插入若不保持位置，刚读到的旧消息会把用户当前看的
+  // 内容顶出视口，等于翻页翻丢了位置。
+  const pendingScrollRef = useRef<'none' | 'older' | 'newer'>('none');
+  const scrollAnchorRef = useRef<{ height: number; top: number } | null>(null);
+
   const handleScrollTrack = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
-    pinnedToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    const distBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const distTop = el.scrollTop;
+    pinnedToBottomRef.current = distBottom < 60;
+    if (!conversationId) return;
+
+    if (distTop < 80 && !isLoadingOlder && hasMoreOlder) {
+      scrollAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
+      pendingScrollRef.current = 'older';
+      store.loadOlderMessages(conversationId);
+    } else if (distBottom < 80 && !isLoadingNewer && hasMoreNewer) {
+      pendingScrollRef.current = 'newer';
+      store.loadNewerMessages(conversationId);
+    }
   };
 
   const lastMsgIdRef = useRef<string | null>(null);
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
+
+    const pending = pendingScrollRef.current;
+    if (pending !== 'none') {
+      pendingScrollRef.current = 'none';
+      if (pending === 'older') {
+        // 头部插入了更早的消息：把视口锚回原处，不抢去底部。
+        const anchor = scrollAnchorRef.current;
+        scrollAnchorRef.current = null;
+        if (anchor) el.scrollTop = anchor.top + (el.scrollHeight - anchor.height);
+        return;
+      }
+      // 尾部插入了更新的消息：贴底则继续贴底，否则保持当前位置。
+      if (pinnedToBottomRef.current) el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
+      return;
+    }
+
     if (!pinnedToBottomRef.current) return;
     const lastId = currentMessages.length ? currentMessages[currentMessages.length - 1].id : null;
     const isMessageBoundary = lastId !== lastMsgIdRef.current;
@@ -285,26 +320,32 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
                     提示，用户来回滚动会看到对话从中间开始，无法区分
                     "消息丢了"与"历史已压缩"。这里渲染成中性分隔线，
                     不用气泡、不用角色样式，避免被误认为模型回复。 */}
-                {/* 会话历史按需取：只有更早的历史存在时，列表顶部才出现
-                    「加载更早」。后端不再一次给全，点一下取一页（默认 50 条）。 */}
-                {hasMoreOlder && (
+                {/* 会话历史按需取：滚动到边缘会自动加载，这里保留一个手动
+                    兜底入口 —— 键盘用户、或自动加载因并发/异常未触发时用。
+                    正常用滚动就够了，两者取同一套游标，不会重复取。 */}
+                {(hasMoreOlder || hasMoreNewer) && (
                   <div className="flex items-center justify-center py-3">
                     <button
                       type="button"
-                      onClick={() => store.loadOlderMessages(conversationId)}
-                      disabled={isLoadingOlder}
+                      onClick={() => {
+                        if (hasMoreOlder) store.loadOlderMessages(conversationId!);
+                        else if (hasMoreNewer) store.loadNewerMessages(conversationId!);
+                      }}
+                      disabled={isLoadingOlder || isLoadingNewer}
                       className="text-xs text-muted hover:text-accent transition-colors
                                  disabled:opacity-50 disabled:cursor-not-allowed
                                  flex items-center gap-2 px-3 py-1.5 rounded-full
                                  border border-foreground/10 hover:border-accent/40"
                     >
-                      {isLoadingOlder ? (
+                      {(isLoadingOlder || isLoadingNewer) ? (
                         <>
                           <span className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full anim-spin" />
                           正在加载…
                         </>
-                      ) : (
+                      ) : hasMoreOlder ? (
                         '↑ 加载更早的历史'
+                      ) : (
+                        '↓ 加载更新的历史'
                       )}
                     </button>
                   </div>
