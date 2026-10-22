@@ -383,6 +383,9 @@ router.get('/flagged/:id', adminAuth, async (req: AuthRequest, res: Response) =>
     const row = await prismaConversation.flaggedConversation.findUnique({ where: { id: String(req.params.id) } });
     if (!row) return res.status(404).json({ error: '标记不存在' });
     const user = await prismaUser.user.findUnique({ where: { id: row.userId }, select: { email: true } });
+    // 快照相表结构见 sensitiveGuard.FlaggedSnapshotPair：纯文本消息只有
+    // role/content；图片/视频消息另带 messageType + imageUrl/videoUrl/refImages。
+    // 没有这些字段的是历史快照（升级前落的档），前端需能照旧渲染。
     res.json({ flag: { ...row, messages: JSON.parse(row.messagesJson || '[]'), userEmail: user?.email || null } });
   } catch { res.status(500).json({ error: '获取标记详情失败' }); }
 });

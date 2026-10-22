@@ -21,7 +21,39 @@ import { maybeGenerateConversationTitle } from '../services/conversationTitle';
 import { routeModel, recordRoutingResult, recordRoutingFallback, recordRoutingRateLimit, recordRoutingTimeout } from '../services/router';
 import { getApiKey } from '../services/apiKeyPool';
 import { awaitAcquireRateGate } from '../services/rateGate';
-import { evaluateSensitivity, issueSafetyRefusal, registerTopicOccurrence, MAX_MEDIUM_WARNINGS } from '../services/sensitiveGuard';
+/**
+ * 把请求体里的媒体字段整形成 extractMediaSignals 能吃的 Message 形态。
+ *
+ * 为什么要转一手：仓里没有图片/视频上传路由，对话中的媒体都是生成的，其
+ * 提示词已包含在 message 正文里（media.ts 的 content 就是 prompt）。所以
+ * 这条路径真正的新增输入只有「用户随消息附带的媒体信号」——目前即参考图。
+ * 不在契约里的字段一律忽略，避免把任意 body 当成媒体喂进判定。
+ */
+function mediaMessagesFromBody(media: any): any[] {
+  if (!Array.isArray(media)) return [];
+  const rows: any[] = [];
+  for (const m of media) {
+    if (!m || typeof m !== 'object') continue;
+    const kind = String(m.kind || m.type || '');
+    if (kind !== 'image' && kind !== 'video' && kind !== 'audio') continue;
+    const url = typeof m.url === 'string' ? m.url : undefined;
+    const filename = typeof m.filename === 'string' ? m.filename : undefined;
+    const mimeType = typeof m.mimeType === 'string' ? m.mimeType : undefined;
+    if (!url && !filename) continue;
+    rows.push({
+      role: 'user',
+      content: '',
+      messageType: kind,
+      metadata: JSON.stringify({ imageUrl: url, videoUrl: url, audioUrl: url, filename, mimeType }),
+    });
+  }
+  return rows;
+}
+
+import {
+  evaluateSensitivity, issueSafetyRefusal, registerTopicOccurrence, MAX_MEDIUM_WARNINGS,
+  extractMediaSignals,
+} from '../services/sensitiveGuard';
 // 模型自动选择子系统已删除（routeScenario 不再用于选模型）；用户意图分析在
 // buildAgentChat 上游的 classifyTask 中独立保留，用于提示词/技能构建。
 import { enqueueM5Outcome } from '../services/modelEvolution/m5Outcome';
@@ -632,7 +664,11 @@ router.post('/', authMiddleware, rateLimit(60000, 30), async (req: AuthRequest, 
     // 高敏感直拒 + 落档；中敏感计警告并继续正常分发（本路由必为新会话）
     let safetyWarningForReply = 0;
     let safetyTopicsForReply: string[] = [];
-    const safetyVerdict = evaluateSensitivity(message);
+    // 媒体信号：客户端随消息带的参考图/媒体描述（若有）。目前只有参考图这一条
+    // 真实来源 —— 仓里没有图片上传路由，对话媒体都是生成的，其提示词已含在
+    // message 里。这里把请求体里的媒体信号喂给判定，让意图分析不只看到文本。
+    const reqMedia = extractMediaSignals(mediaMessagesFromBody(req.body?.media));
+    const safetyVerdict = evaluateSensitivity(message, reqMedia);
     if (safetyVerdict.level === 'high') {
       const refuse = await issueSafetyRefusal({
         userId, username: user.username, conversation: null, message,
@@ -1379,7 +1415,7 @@ router.post('/:id/messages', authMiddleware, rateLimit(60000, 30), async (req: A
     // （无关话题不继承计数，也不依赖内存计数器）。
     let safetyWarningForReply = 0;
     let safetyTopicsForReply: string[] = [];
-    const safetyVerdict = evaluateSensitivity(message);
+    const safetyVerdict = evaluateSensitivity(message, extractMediaSignals(mediaMessagesFromBody(req.body?.media)));
     if (safetyVerdict.level !== 'none') {
       const occurrence = await registerTopicOccurrence(conversation.id, safetyVerdict.labels);
       if (safetyVerdict.level === 'high' || occurrence > MAX_MEDIUM_WARNINGS) {
