@@ -4,6 +4,18 @@
 // 本模块只管高/中敏感内容（违法违规、成瘾自伤、未成年色情等）。
 // 检测完全基于规则表，不加新的 LLM 调用（无额外模型开销，避免误判由模型自由裁定）。
 //
+// 媒体维度：
+// 意图分析原先只看得到文本。对话里的图片/视频**没有独立列** —— URL、提示词、
+// 参考图都塞在 Message.metadata JSON 里（见 routes/media.ts），于是媒体既进不了
+// 判定，也在落档快照时被丢掉，标记页更无从展示。这里补上三处：
+//   · evaluateSensitivity 新增 media 入参，媒体的提示词/文件名走同一套规则表；
+//   · extractMediaSignals 从 Message 行里抽出媒体信号；
+//   · 落档快照保留 messageType 与 imageUrl/videoUrl，标记页才展示得出来。
+// 注意这是规则/元数据级判定（本模块的原则就是不加新的 LLM 调用）—— 它能发现
+// 「提示词或文件名本身敏感」与「历史媒体敏感」，但看不懂图里画的是什么。
+// 内容级识别要另接视觉模型（mediaAnalysis.ts 的 provider 目前是空壳），
+// 不在这条链上。
+
 // 设计要点（对应敏感度处理规则）：
 // - 高敏感：直接拒绝，不经过警告流程，落档最近 5 对消息；
 // - 中敏感：同一「受限事项」最多 3 次警告，第 4 次起拒绝，落档最近 10 对消息；
@@ -70,23 +82,82 @@ const HELP_EXEMPT_LABELS = new Set(['心理危机/暴力倾向']);
 /** 教育语境可豁免的中敏感标签（高危制作类不豁免，且高敏感永不豁免） */
 const EDU_EXEMPT_LABELS = new Set(['暴恐视听', '违禁交易', '低俗色情', '赌博诈骗', '邪教组织', 'restricted-trade']);
 
-/** 规则判定。高 > 中；无命中返回 none。reason 用于入档，不进提示词。 */
-export function evaluateSensitivity(message: string): SensitivityVerdict {
-  const highLabels: string[] = [];
-  for (const { pattern, label } of HIGH_RULES) if (pattern.test(message)) highLabels.push(label);
-  if (highLabels.length > 0) return { level: 'high', labels: highLabels };
+/** 一条媒体信号。URL/提示词都来自 Message.metadata，不是独立列。 */
+export interface MediaSignal {
+  kind: string;          // image / video / audio / media_confirm
+  prompt?: string;       // 生成该媒体的提示词
+  url?: string;          // imageUrl / videoUrl
+  filename?: string;
+  mimeType?: string;
+  /** 用户提供的参考图（image-gen 的 refImages） */
+  refImages?: string[];
+}
 
-  const helpContext = BENIGN_HELP_CONTEXT.test(message);
-  const eduContext = EDU_CONTEXT.test(message);
+function safeParseMeta(raw: unknown): any {
+  if (typeof raw !== 'string' || !raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+/**
+ * 从 Message 行里抽出媒体信号。调用方传通常是一小段近期消息
+ * （落档时就近取的那批），所以这里不做额外查询。
+ */
+export function extractMediaSignals(messages: any[]): MediaSignal[] {
+  const out: MediaSignal[] = [];
+  for (const m of messages || []) {
+    const type = String(m?.messageType || '');
+    if (type !== 'image' && type !== 'video' && type !== 'audio') continue;
+    const meta = safeParseMeta(m?.metadata);
+    const url = meta?.imageUrl || meta?.videoUrl || meta?.audioUrl || null;
+    const refs = Array.isArray(meta?.refImages) ? meta.refImages : undefined;
+    if (!url && !meta?.prompt && !refs?.length) continue;
+    out.push({
+      kind: type,
+      prompt: meta?.prompt ? String(meta.prompt) : undefined,
+      url: url ? String(url) : undefined,
+      filename: meta?.filename ? String(meta.filename) : undefined,
+      mimeType: meta?.mimeType ? String(meta.mimeType) : undefined,
+      refImages: refs,
+    });
+  }
+  return out;
+}
+
+/** 规则判定。高 > 中；无命中返回 none。reason 用于入档，不进提示词。 */
+export function evaluateSensitivity(
+  message: string,
+  media: MediaSignal[] = [],
+): SensitivityVerdict {
+  const text = String(message ?? '');
+  const highLabels: string[] = [];
+  for (const { pattern, label } of HIGH_RULES) if (pattern.test(text)) highLabels.push(label);
+  // 媒体的提示词/文件名与用户文本同级判定：媒体本身常由提示词定义，
+  // 只看消息正文会漏掉「用敏感提示词生成的图/视频」。
+  for (const m of media || []) {
+    const parts = [m?.prompt, m?.filename].filter(Boolean).join(' ');
+    if (!parts) continue;
+    for (const { pattern, label } of HIGH_RULES) if (pattern.test(parts)) highLabels.push(label);
+  }
+  if (highLabels.length > 0) return { level: 'high', labels: [...new Set(highLabels)] };
+
+  const helpContext = BENIGN_HELP_CONTEXT.test(text);
+  const eduContext = EDU_CONTEXT.test(text);
 
   const labels: string[] = [];
   for (const { pattern, label } of MEDIUM_RULES) {
-    if (!pattern.test(message)) continue;
+    if (!pattern.test(text)) continue;
     if (helpContext && HELP_EXEMPT_LABELS.has(label)) continue;
     if (eduContext && EDU_EXEMPT_LABELS.has(label)) continue;
     labels.push(label);
   }
-  if (labels.length > 0) return { level: 'medium', labels };
+  // 媒体侧：提示词/文件名命中即计。媒体自身不承载语境词，故这里不做
+  // help/edu 豁免（保守：宁可多报一次警告，不要漏报一次高敏感）。
+  for (const m of media || []) {
+    const parts = [m?.prompt, m?.filename].filter(Boolean).join(' ');
+    if (!parts) continue;
+    for (const { pattern, label } of MEDIUM_RULES) if (pattern.test(parts)) labels.push(label);
+  }
+  if (labels.length > 0) return { level: 'medium', labels: [...new Set(labels)] };
 
   return { level: 'none', labels: [] };
 }
@@ -101,7 +172,33 @@ export function buildWarningText(warningCount: number): string {
   return `⚠️ 此内容涉及中-高敏感话题，这是第 ${warningCount} 次警告（3 次后将拒绝回答）。`;
 }
 
-export interface FlaggedSnapshotPair { role: string; content: string; }
+export interface FlaggedSnapshotPair {
+  role: string;
+  content: string;
+  /** 媒体消息才有的字段。没有这些字段的历史快照照旧渲染。 */
+  messageType?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  audioUrl?: string;
+  refImages?: string[];
+}
+
+/** 把一条 Message 行转成快照对，带上媒体字段（媒体信息都在 metadata 里）。 */
+export function toSnapshotPair(m: any): FlaggedSnapshotPair {
+  const pair: FlaggedSnapshotPair = {
+    role: String(m?.role ?? ''),
+    content: String(m?.content ?? ''),
+  };
+  const type = String(m?.messageType || '');
+  if (type !== 'image' && type !== 'video' && type !== 'audio') return pair;
+  const meta = safeParseMeta(m?.metadata);
+  pair.messageType = type;
+  if (meta?.imageUrl) pair.imageUrl = String(meta.imageUrl);
+  if (meta?.videoUrl) pair.videoUrl = String(meta.videoUrl);
+  if (meta?.audioUrl) pair.audioUrl = String(meta.audioUrl);
+  if (Array.isArray(meta?.refImages) && meta.refImages.length) pair.refImages = meta.refImages;
+  return pair;
+}
 
 function intersects(a: string[], b: string[]): boolean {
   for (const x of a) if (b.includes(x)) return true;
@@ -234,7 +331,10 @@ export async function issueSafetyRefusal(opts: {
       orderBy: { createdAt: 'desc' },
       take: pairs * 2,
     });
-    const snap: FlaggedSnapshotPair[] = recent.reverse().map((m: any) => ({ role: m.role, content: m.content }));
+    // 快照必须带上媒体字段：图片/视频没有独立列，URL 在 metadata 里。
+    // 原先这里只取 role/content，等于把媒体证据整个丢掉 —— 标记页想展示
+    // 也没有数据可展示。
+    const snap: FlaggedSnapshotPair[] = recent.reverse().map(toSnapshotPair);
     await tx.conversation.update({
       where: { id: conv.id },
       data: { isSafetyFlagged: true, safetyWarnings: opts.warningCount },

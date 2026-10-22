@@ -22,6 +22,8 @@ export default function AdminFlaggedPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // 快照里哪几条媒体被点开成原图/原视频（默认只给缩略，避免一次铺满屏幕）
+  const [expandedMedia, setExpandedMedia] = useState<Record<number, boolean>>({});
 
   const fetchFlagged = async (level = '') => {
     setLoading(true);
@@ -37,8 +39,83 @@ export default function AdminFlaggedPage() {
 
   const toggleDetail = async (id: string) => {
     if (openId === id) { setOpenId(null); setDetail(null); return; }
-    setOpenId(id); setDetail(null); setDetailLoading(true);
+    setOpenId(id); setDetail(null); setDetailLoading(true); setExpandedMedia({});
     try { setDetail(await apiGet(`/admin/flagged/${id}`)); } catch {} finally { setDetailLoading(false); }
+  };
+
+  // 渲染一条快照里的媒体：图给缩略（点开原图）、视频给原生 <video>
+  // （带 controls，管理员要逐帧看）、音频给 <audio>。refImages 是用户随
+  // 生成请求附上的参考图，一并列出 —— 它往往才是真正需要人工看的东西。
+  const mediaOf = (idx: number, m: any) => {
+    const media = mediaUrlOf(m);
+    // 参考图：用户随生成请求附上的图（image-gen 的 refImages）。
+    // 仓里没有图片上传路由，这是对话里唯一由用户直接提供的图像来源，
+    // 也正是人工复核时最该看的东西。
+    const refs: string[] = Array.isArray(m?.refImages) ? m.refImages.filter((u: any) => typeof u === 'string') : [];
+    const refsBlock = refs.length ? (
+      <div className="mt-2">
+        <div className="text-[10px] text-muted mb-1">用户参考图（{refs.length}）</div>
+        <div className="flex flex-wrap gap-1.5">
+          {refs.map((u, i) => (
+            <a key={i} href={u} target="_blank" rel="noreferrer">
+              <img src={u} alt={`参考图 ${i + 1}`} className="h-20 rounded border border-error/30 object-cover hover:opacity-80" />
+            </a>
+          ))}
+        </div>
+      </div>
+    ) : null;
+
+    if (!media) return refsBlock;
+    const open = !!expandedMedia[idx];
+    const toggle = () => setExpandedMedia((prev) => ({ ...prev, [idx]: !prev[idx] }));
+    if (media.kind === 'image') {
+      return (
+        <div className="mt-2">
+          {open ? (
+            <img src={media.url} alt="标记图片原图" className="max-w-full rounded border border-error/30" />
+          ) : (
+            <button type="button" onClick={toggle} className="block">
+              <img src={media.url} alt="标记图片缩略" className="h-24 rounded border border-error/30 object-cover" />
+            </button>
+          )}
+          <div className="mt-1 flex items-center gap-2">
+            <button type="button" onClick={toggle} className="text-[10px] text-accent hover:underline">
+              {open ? '收起' : '查看原图'}
+            </button>
+            <a href={media.url} target="_blank" rel="noreferrer" className="text-[10px] text-muted hover:underline">
+              新窗口打开
+            </a>
+          </div>
+          {refsBlock}
+        </div>
+      );
+    }
+    if (media.kind === 'video') {
+      return (
+        <div className="mt-2">
+          <video src={media.url} controls preload="metadata" className="max-w-full max-h-72 rounded border border-error/30" />
+          {refsBlock}
+        </div>
+      );
+    }
+    return (
+      <div className="mt-2">
+        <audio src={media.url} controls preload="none" className="w-full" />
+        {refsBlock}
+      </div>
+    );
+  };
+
+  // 一条消息是否为媒体、媒体 URL 是什么。图片/视频没有独立列，
+  // URL 在 Message.metadata 里；落档快照现在把 messageType 与 URL 一并
+  // 保留（见 sensitiveGuard.toSnapshotPair）。没有这些字段的历史快照
+  // （升级前落的档）mediaUrl 返回空，走原纯文本渲染，不会坏。
+  const mediaUrlOf = (m: any): { kind: string; url: string } | null => {
+    const kind = String(m?.messageType || '');
+    if (kind === 'image' && m?.imageUrl) return { kind, url: String(m.imageUrl) };
+    if (kind === 'video' && m?.videoUrl) return { kind, url: String(m.videoUrl) };
+    if (kind === 'audio' && m?.audioUrl) return { kind, url: String(m.audioUrl) };
+    return null;
   };
 
   return (
@@ -112,6 +189,7 @@ export default function AdminFlaggedPage() {
                                 <div className="text-[10px] chat-meta-model mb-0.5 px-1">{isUser ? '用户' : 'AI'}</div>
                                 <div className={`text-xs max-w-[88%] ${isUser ? 'chat-user-bubble' : 'chat-model-text'}`}>
                                   <div className="whitespace-pre-wrap break-words line-clamp-6">{m.content}</div>
+                                  {mediaOf(idx, m)}
                                 </div>
                               </div>
                             );
