@@ -1153,12 +1153,14 @@ router.post('/conversations', authMiddleware, rateLimit(60000, 30), async (req: 
 
 // 会话历史：按需分页取，后端不全量搬运。
 //
-// · limit  本页条数（1~200，默认 50）
-// · before 游标：上一页最早一条消息的 id，取它之前的更旧消息
+// · limit  本页条数（1~200，默认 10 —— 首屏只给最近几条，其余靠滚动加载）
+// · before 游标：当前最旧一条消息的 id，取它之前的更旧消息（向上翻）
+// · after  游标：当前最新一条消息的 id，取它之后的更新消息（向下翻）
 //
 // 游标用 (createdAt, id) 复合而不是只用 createdAt —— 同一毫秒内创建的多条
-// 消息只用时间比较会被整体跳过或重复。响应带 hasMore / nextCursor，
-// 前端据此显示「加载更多」。
+// 消息只用时间比较会被整体跳过或重复。
+// 首屏不带游标时给「最近的 limit 条」，故正常情况下 hasMoreNewer 为 false，
+// 只有向后翻页（before）之后才存在更新的未取消息。
 router.get('/conversations/:id/messages', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     // 不带 include：Prisma 默认只返回标量字段，不会自动把关系读出来。
@@ -1168,45 +1170,82 @@ router.get('/conversations/:id/messages', authMiddleware, async (req: AuthReques
     });
     if (!conversation || conversation.userId !== req.user!.id) return res.status(404).json({ error: '对话不存在' });
 
-    const limit = Math.min(Math.max(parseInt(String(req.query.limit)) || 50, 1), 200);
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit)) || 10, 1), 200);
     const before = req.query.before ? String(req.query.before) : null;
+    const after = req.query.after ? String(req.query.after) : null;
+    const dir = after ? 'asc' : 'desc';
 
     let cursor: { createdAt: Date; id: string } | null = null;
-    if (before) {
+    const anchorId = after || before;
+    if (anchorId) {
       const anchor = await prismaConversation.message.findUnique({
-        where: { id: before },
+        where: { id: anchorId },
         select: { createdAt: true, id: true },
       });
-      // 游标指向的消息不存在（已删除/越权）时退回第一页，不报错。
+      // 游标指向的消息不存在（已删除/越权）时退回首屏，不报错。
       if (anchor) cursor = { createdAt: anchor.createdAt, id: anchor.id };
     }
 
-    // 按时间倒序取 limit+1 条，多取的那条用来判断还有没有更早的。
+    // 按目标方向多取一条，用来判断那个方向还有没有更多。
     const rows = await prismaConversation.message.findMany({
       where: {
         conversationId: conversation.id,
         ...(cursor
-          ? {
-              OR: [
-                { createdAt: { lt: cursor.createdAt } },
-                { createdAt: cursor.createdAt, id: { lt: cursor.id } },
-              ],
-            }
+          ? after
+            ? {
+                OR: [
+                  { createdAt: { gt: cursor.createdAt } },
+                  { createdAt: cursor.createdAt, id: { gt: cursor.id } },
+                ],
+              }
+            : {
+                OR: [
+                  { createdAt: { lt: cursor.createdAt } },
+                  { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+                ],
+              }
           : {}),
       },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [{ createdAt: dir }, { id: dir }],
       take: limit + 1,
     });
 
     const hasMore = rows.length > limit;
     const page = hasMore ? rows.slice(0, limit) : rows;
-    page.reverse(); // 前端按时间正序渲染
+    page.reverse(); // 统一按时间正序交还前端
+
+    // hasMoreNewer/hasMoreOlder 各自只回答"那个方向还有没有未取消息"。
+    // 注意不能想当然：用 after 往上翻之后，older 方向未必还有（可能早就翻到
+    // 最早了），写成 true 会让前端永远挂着一个点了却返回空页的按钮。
+    // 所以 after 路径额外做一次存在性检查；before 路径只需要判断 older。
+    let hasMoreNewer = false;
+    let hasMoreOlder = false;
+    if (cursor) {
+      const olderHit = await prismaConversation.message.findFirst({
+        where: {
+          conversationId: conversation.id,
+          OR: [
+            { createdAt: { lt: cursor.createdAt } },
+            { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+          ],
+        },
+        select: { id: true },
+      });
+      hasMoreOlder = Boolean(olderHit);
+      if (after) hasMoreNewer = hasMore;
+    } else {
+      // 首屏不带游标 → 给的就是最近 limit 条，更早的可能还有，更新的没有。
+      hasMoreOlder = hasMore;
+      hasMoreNewer = false;
+    }
 
     res.json({
       messages: page,
       conversation,
-      hasMore,
-      nextCursor: hasMore ? page[0]?.id ?? null : null,
+      hasMore: hasMoreOlder,
+      hasMoreNewer,
+      nextCursor: hasMoreOlder ? page[0]?.id ?? null : null,
+      prevCursor: hasMoreNewer ? page[page.length - 1]?.id ?? null : null,
     });
   } catch { res.status(500).json({ error: '获取对话失败' }); }
 });
