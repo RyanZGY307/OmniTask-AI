@@ -2316,3 +2316,117 @@ model UserInstalledSkill {
   @@index([status])
   @@index([promotedSkillId])
 }
+
+
+// ================================================================
+// 系统观测中心（System Observability Center）
+// 注意：时间列统一 timestamptz，UTC 语义。AiRunSummary 强制 24h 过期。
+// ================================================================
+
+model DbMetricSnapshot {
+  id                       String   @id @default(cuid())
+  capturedAt               DateTime @db.Timestamptz(6)
+  domain                   String
+  dbName                   String
+  connectionStatus         String   @default("unknown")
+  sizeBytes                BigInt?
+  schemaCount              Int?
+  tableCount               Int?
+  instanceId               String?
+  instanceDiskUsedBytes    BigInt?
+  instanceDiskTotalBytes   BigInt?
+  instanceDiskAvailableBytes BigInt?
+  instanceSource           String   @default("unknown")
+  growthBytes24h           BigInt?
+  latencyMs                Int?
+  errorCode                String?
+  createdAt                DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([domain, capturedAt])
+  @@index([capturedAt])
+}
+
+model DbStorageEntry {
+  id                 String   @id @default(cuid())
+  captureId          String
+  capturedAt         DateTime @db.Timestamptz(6)
+  domain             String
+  dbName             String
+  schemaName         String
+  tableName          String
+  objectKind         String
+  sizeBytes          BigInt
+  rowEstimate        BigInt?
+  businessCategory   String   @default("unclassified")
+  categoryConfidence String   @default("unknown")
+  categoryEvidence   String?
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([captureId])
+  @@index([capturedAt])
+  @@index([businessCategory])
+  @@index([domain, capturedAt])
+}
+
+model AiRunSummary {
+  id               String   @id @default(cuid())
+  taskId           String
+  taskKind         String
+  createdAt        DateTime @db.Timestamptz(6)
+  expiresAt        DateTime @db.Timestamptz(6)
+  summary          String
+  triggerSource    String   @default("unknown")
+  agentName        String?
+  modelUsed        String?
+  goal             String?
+  status           String   @default("unknown")
+  decisionJson     String?
+  guardJson        String?
+  toolsJson        String?
+  outcomeJson      String?
+  startedAt        DateTime? @db.Timestamptz(6)
+  completedAt      DateTime? @db.Timestamptz(6)
+  redactionApplied String   @default("")
+  createdAtRow     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([taskId, taskKind])
+  @@index([expiresAt])
+  @@index([taskKind, createdAt])
+}
+
+model ObsEvent {
+  id         String   @id @default(cuid())
+  ts         DateTime @db.Timestamptz(6)
+  kind       String
+  severity   String   @default("info")
+  title      String
+  detail     String   @default("")
+  taskId     String?
+  taskKind   String?
+  domain     String?
+  status     String   @default("open")
+  resolved   Boolean  @default(false)
+  payloadRef String?
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([ts])
+  @@index([severity, ts])
+  @@index([kind, ts])
+}
+
+model SummaryPurgeLog {
+  id            String   @id @default(cuid())
+  startedAt     DateTime @db.Timestamptz(6)
+  finishedAt    DateTime @db.Timestamptz(6)
+  mode          String   @default("periodic")
+  scannedCount  Int      @default(0)
+  expiredFound  Int      @default(0)
+  deletedCount  Int      @default(0)
+  failedCount   Int      @default(0)
+  latencyMs     Int      @default(0)
+  leaseAcquired Boolean  @default(false)
+  errorMessage  String?
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([startedAt])
+}

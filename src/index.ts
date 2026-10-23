@@ -341,6 +341,57 @@ async function startup() {
   setTimeout(runFlagCleanup, 60000);
   setInterval(runFlagCleanup, 24 * 60 * 60 * 1000);
 
+  // ================================================================
+  // 系统观测中心
+  //   1) 采集：只读统计 → DbMetricSnapshot / DbStorageEntry（页面读缓存表，
+  //      用户刷新页面不触发全表扫描）
+  //   2) 摘要投影：只读既有任务表 → AiRunSummary（不改 core）
+  //   3) 24h 清理：顾问锁多实例去重 + 分批物理删除，启动即跑 + 每分钟
+  // ================================================================
+  const obs = require('./services/observability/collector');
+  const obsPurge = require('./services/observability/purge');
+  const obsSummary = require('./services/observability/aiSummary');
+
+  const OBS_COLLECT_MS = parseInt(process.env.OBS_COLLECT_INTERVAL_MS || '600000', 10);   // 10 min
+  const OBS_STORAGE_MS = parseInt(process.env.OBS_STORAGE_INTERVAL_MS || '1800000', 10);  // 30 min
+  const OBS_SUMMARY_MS = parseInt(process.env.OBS_SUMMARY_INTERVAL_MS || '300000', 10);   // 5 min
+
+  if (process.env.OBSERVABILITY_ENABLED !== 'false') {
+    try { obs.bindDomains(); } catch (err: any) { console.warn('[OBS] bindDomains warning:', err?.message ?? err); }
+    try { obsPurge.startSummaryPurgeWorker(); } catch (err: any) { console.warn('[OBS] purge worker start warning:', err?.message ?? err); }
+
+    // 启动即采一次，随后按频率；单库失败只记录，不影响其他库与其他调度
+    setTimeout(() => {
+      obs.collectMetrics()
+        .then((r: any) => { if (r.failed > 0) console.warn(`[OBS] metrics collected ok=${r.captured} failed=${r.failed}`); })
+        .catch((err: any) => console.warn('[OBS] collectMetrics error:', err?.message ?? err));
+    }, 30000);
+
+    setTimeout(() => {
+      obs.collectStorageBreakdown()
+        .then((r: any) => { if (r.failed > 0) console.warn(`[OBS] storage collected ok=${r.captured} failed=${r.failed}`); })
+        .catch((err: any) => console.warn('[OBS] collectStorage error:', err?.message ?? err));
+    }, 45000);
+
+    setTimeout(() => {
+      Promise.all([obsSummary.syncAiRunSummaries(), obsSummary.syncChatRunSummaries()])
+        .catch((err: any) => console.warn('[OBS] summary sync error:', err?.message ?? err));
+    }, 60000);
+
+    setInterval(() => {
+      obs.collectMetrics().catch((err: any) => console.warn('[OBS] collectMetrics error:', err?.message ?? err));
+    }, OBS_COLLECT_MS);
+    setInterval(() => {
+      obs.collectStorageBreakdown().catch((err: any) => console.warn('[OBS] collectStorage error:', err?.message ?? err));
+    }, OBS_STORAGE_MS);
+    setInterval(() => {
+      Promise.all([obsSummary.syncAiRunSummaries(), obsSummary.syncChatRunSummaries()])
+        .catch((err: any) => console.warn('[OBS] summary sync error:', err?.message ?? err));
+    }, OBS_SUMMARY_MS);
+
+    console.log(`[OBS] 观测中心调度已注册：metrics=${OBS_COLLECT_MS}ms storage=${OBS_STORAGE_MS}ms summary=${OBS_SUMMARY_MS}ms purge=60s`);
+  }
+
   app.listen(env.PORT, () => console.log(`[BOOT] OmniTask server running on port ${env.PORT}`));
 }
 
