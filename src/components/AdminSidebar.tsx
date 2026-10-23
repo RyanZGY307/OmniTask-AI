@@ -41,6 +41,7 @@ export default function AdminSidebar() {
     { path: '/admin/payments', label: '付款审核', tab: null, icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
     { path: '/admin/feedback', label: '反馈管理', tab: null, icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z' },
     { path: '/admin/evolution', label: '进化引擎', tab: null, icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
+    { path: '/admin/observability', label: '系统观测中心', tab: null, icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 012 2h2a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
   ];
 
   const isActive = (link: typeof links[0]) => {
