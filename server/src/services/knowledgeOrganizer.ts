@@ -1,6 +1,24 @@
 // ================================================================
 // Knowledge Organizer — Gemini-based knowledge organization
 // (normalize, classify, dedup, connect, separate fact types)
+//
+// ⚠ @deprecated 本文件是**旧「数据库自整理系统」**，其全部能力已合并进
+//    新代系统 services/knowledgeOrg/：
+//      · 合规与确定性整理（claimType 白名单 / confidence 夹取 /
+//        evidenceIds 与 variantId 幻觉防护 / 关系类型白名单 /
+//        来源→claimType 映射 / firstSentence 归一化 / MAX_* 上限）
+//        → knowledgeOrg/orgCompliance.ts
+//      · 任务生命周期 → orgRuntime.ts（新入口 executeOrganizationJob）
+//      · 快照与哈希 → orgSnapshot.ts
+//      · 扫描 → orgScanner.ts    worker → orgWorkers.ts
+//      · 结果合并 → orgResultPool.ts   校验 → orgValidator.ts
+//      · 落库（已接入合规闸门）→ orgApplier.ts
+//
+//    新代码请改用 orgRuntime.executeOrganizationJob()。
+//    本文件暂不删除：researchFill.ts / versionedMerge.ts 仍在引用，
+//    迁移完成后单独一轮清理（删除前需先改这些调用方）。
+//    VALID_CLAIM_TYPES 的单一来源已移至 orgCompliance.ts（纯模块），
+//    本文件与 versionedMerge.ts 的 import 路径保持不变，行为不变。
 // ================================================================
 
 import { prismaKnowledge } from './db';

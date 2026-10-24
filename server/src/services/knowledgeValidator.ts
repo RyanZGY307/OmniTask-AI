@@ -19,16 +19,13 @@ export interface ValidationResult {
   warnings: string[];
 }
 
-export const VALID_CLAIM_TYPES = [
-  'OFFICIAL_FACT',
-  'MEASURED_RESULT',
-  'TECHNICAL_ANALYSIS',
-  'VISUAL_OBSERVATION',
-  'USER_REPORT',
-  'OPINION',
-  'INFERENCE',
-  'UNKNOWN',
-] as const;
+// 单一来源已移至 knowledgeOrg/orgCompliance.ts（纯模块，不拖 Prisma）。
+// 此处**再导出**：对外 API 不变，knowledgeOrganizer / versionedMerge 等
+// 既有引用方无需改动，且不会形成循环依赖（orgCompliance 不再引用本文件）。
+import { VALID_CLAIM_TYPES } from './knowledgeOrg/orgCompliance';
+// 对外 API 保持不变（knowledgeOrganizer / versionedMerge 仍从这里 import）；
+// 单一来源在纯模块 orgCompliance.ts，避免本文件把 Prisma 依赖传染给整理链路。
+export { VALID_CLAIM_TYPES };
 
 const OPINION_MARKERS = [
   'in my opinion', 'i think', 'we think', 'i believe', 'imho', 'personally',
