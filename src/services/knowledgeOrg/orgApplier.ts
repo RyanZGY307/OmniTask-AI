@@ -8,6 +8,7 @@
 
 import { prismaKnowledge } from '../db';
 import { buildSnapshot } from './orgSnapshot';
+import { validClaimType, firstSentence, clampConfidence, describeConflicts } from './orgCompliance';
 import type { MergedPlan } from './orgResultPool';
 import type { OrgProposal } from './orgWorkers';
 import type { BuiltSnapshot } from './orgSnapshot';
@@ -201,15 +202,30 @@ async function applyProposal(p: OrgProposal, affectedFactIds: Set<string>): Prom
       if (pieces.length < 2) return null; // not a valid split
       const created: string[] = [];
       const factEvidenceRows = await prismaKnowledge.knowledgeFactEvidence.findMany({ where: { factId: p.targetId } });
+      // 合规闸门（旧「数据库自整理系统」能力，已合并进本模块）：
+      // SPLIT_FACT 是**新建行**的路径，AI 提供的 piece.claimType / piece.claim
+      // 在此前是**原样写库**的 —— 既不校验 claimType 白名单，也不归一化 claim。
+      // 后果：AI 返回 claimType:'made_up_type' 会直接落成非法值，
+      // 之后任何按 claimType 过滤/统计的逻辑都会漏掉这条。
+      const compliance: string[] = [];
       for (const piece of pieces) {
+        // claim 归一化：压空白 + 取首句 + 300 字上限（拆出来的片段本就该是原子句）
+        const claim = firstSentence(String(piece.claim ?? ''));
+        if (!claim.trim()) continue;   // 空 claim 不建行
+        const rawType = String(piece.claimType || original.claimType || '');
+        const claimType = validClaimType(rawType);
+        if (claimType !== rawType.toUpperCase()) {
+          compliance.push(`claimType "${rawType}" → "${claimType}"`);
+        }
+        const confidence = clampConfidence(original.confidence);
         const row = await prismaKnowledge.knowledgeFact.create({
           data: {
             objectId: original.objectId,
             variantId: piece.variantId ?? original.variantId,
-            claim: String(piece.claim ?? '').trim(),
-            claimType: piece.claimType || original.claimType,
+            claim,
+            claimType,
             verificationStatus: original.verificationStatus,
-            confidence: original.confidence,
+            confidence,
             observedAt: original.observedAt,
             version: original.version,
           },
@@ -232,7 +248,9 @@ async function applyProposal(p: OrgProposal, affectedFactIds: Set<string>): Prom
         action: 'SPLIT_FACT',
         before: original.claim,
         after: `split into ${created.join(', ')}`,
-        reason: p.reason,
+        reason: compliance.length
+          ? `${p.reason ?? ''} [合规修正: ${compliance.join('; ')}]`
+          : p.reason,
       };
     }
 
