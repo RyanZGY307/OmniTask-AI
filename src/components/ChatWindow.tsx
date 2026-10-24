@@ -493,6 +493,12 @@ function CapsuleBar({
   conversationId: string | null;
   onOpenWorkspace?: () => void;
 }) {
+  // Agent 模式：默认 'chat'（用户不切就保持普通对话）。
+  // 目前只驱动下方 ⋮ 菜单里那个合并组件的视觉态，**尚未接入请求路径** ——
+  // 接入前必须先定「哪些计算真正下沉到前端」（见 computePlacement.ts 的
+  // R1-R4 规则：调 LLM / 向量 / 计费 / 审计都必须留服务端）。
+  const [agentMode, setAgentMode] = useState<'chat' | 'agent'>('chat');
+  const toggleAgentMode = () => setAgentMode((m) => (m === 'chat' ? 'agent' : 'chat'));
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
@@ -649,14 +655,39 @@ function CapsuleBar({
                 style={menuStyle}
                 className="fixed z-50 w-56 liquid-glass-strong rounded-card overflow-y-auto anim-dropdown p-2.5"
               >
-                {/* 升级入口：独立、与菜单背景反色 */}
-                <button
-                  onClick={() => { closeMenuAnd(() => router.push('/pricing')); }}
-                  className="w-full mb-2 px-3.5 py-3 rounded-xl bg-primary text-surface flex items-center justify-between anim-press"
-                >
-                  <span className="text-sm font-semibold">{isPro ? `${tr('side.credits')} ${formatCredits(creditBalance || 0)}` : tr('chat.upgrade')}</span>
-                  <span className="text-[11px] opacity-70">{isPro ? tr('chat.manage') : tr('chat.upgradeShort')}</span>
-                </button>
+                {/* 模式与升级：**同一个组件的两个选项**（不是两个组件两个选项）。
+                    · Pro 用户不显示「购买 Pro」，只剩「Agent 模式」单选项
+                    · chat（默认）：Agent 格 = bg-surface/text-primary
+                      → 浅色模式即白底黑字
+                    · agent：Agent 格 = bg-primary/text-surface
+                      → 与「购买 Pro」完全一致的反色组合，浅色模式即黑底白字
+                    · 两态用同一对 token 互换，**天然保证字体与背景相反色**，
+                      浅/深色模式下都不会出现字体消失
+                    · 点击带弹性形变（anim-spring-toggle / anim-spring-elastic-in） */}
+                <div key={agentMode} className="mb-2 rounded-xl overflow-hidden flex anim-spring-elastic-in">
+                  {!isPro && (
+                    <button
+                      onClick={() => { closeMenuAnd(() => router.push('/pricing')); }}
+                      className="flex-1 min-w-0 px-3.5 py-3 bg-primary text-surface flex items-center justify-between anim-press"
+                      title={tr('chat.upgrade')}
+                    >
+                      <span className="text-sm font-semibold truncate">{tr('chat.upgrade')}</span>
+                      <span className="text-[11px] opacity-70 shrink-0 ml-1.5">{tr('chat.upgradeShort')}</span>
+                    </button>
+                  )}
+                  <button
+                    role="menuitem"
+                    aria-pressed={agentMode === 'agent'}
+                    onClick={toggleAgentMode}
+                    className={`flex-1 min-w-0 px-3.5 py-3 flex items-center justify-between anim-spring-toggle ${
+                      agentMode === 'agent' ? 'bg-primary text-surface' : 'bg-surface text-primary'
+                    } ${!isPro ? 'border-l border-border' : ''}`}
+                    title={tr('chat.agentMode')}
+                  >
+                    <span className="text-sm font-semibold truncate">{tr('chat.agentMode')}</span>
+                    <span className="text-[11px] opacity-70 shrink-0 ml-1.5">{agentMode === 'agent' ? tr('chat.agentOn') : tr('chat.agentOff')}</span>
+                  </button>
+                </div>
                 {menuItems.length > 0 && (
                   <div className="space-y-0.5">
                     {menuItems.map((item) => (

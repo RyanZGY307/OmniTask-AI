@@ -40,18 +40,14 @@ export default function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose:
   const tier = user ? getEffectiveTier(user) : 'STANDARD';
   const isPro = tier === 'PRO' || tier === 'ULTRA';
 
-  // 功能列表入口：后台管理(admin) / Agent(Pro) / 项目 / 插件。
-  // 功能本体稍后实现，此处先预留界面：点击给出状态提示。
-  const handleAgent = () => {
-    showToast(isPro ? t('side.agentDev') : t('side.agentPro'));
-    onClose();
-  };
+  // 功能列表入口：后台管理(admin) / 项目 / 插件 / 技能。
+  // 注意：**Agent 入口已从侧边栏移除** —— 它现在只在对话页右上角 ⋮
+  // 菜单内，与「购买 Pro」合并为同一个二选一组件（见 ChatWindow.tsx）。
   const handleProject = () => { showToast(t('side.projectDev')); onClose(); };
   const handlePlugins = () => { showToast(t('side.pluginsEmpty')); onClose(); };
 
   const features: { key: string; icon: JSX.Element; label: string; onClick: () => void }[] = [];
   if (isAdmin) features.push({ key: 'admin', icon: <ShieldIcon />, label: t('side.admin'), onClick: () => { router.push('/admin'); onClose(); } });
-  features.push({ key: 'agent', icon: <BotIcon />, label: t('side.agent'), onClick: handleAgent });
   features.push({ key: 'project', icon: <FolderIcon />, label: t('side.projects'), onClick: handleProject });
   features.push({ key: 'plugin', icon: <PlugIcon />, label: t('side.plugins'), onClick: handlePlugins });
   features.push({ key: 'skills', icon: <BoltIcon />, label: t('side.skills'), onClick: () => { router.push('/skills'); onClose(); } });
