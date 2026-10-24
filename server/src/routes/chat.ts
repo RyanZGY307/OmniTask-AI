@@ -101,7 +101,12 @@ import { compilePrompt, discoverSkills } from '../services/compiler';
 import { selectSkills, SKILL_HARD_CAP } from '../services/skillSelector';
 import { runPromptRuntime } from '../services/promptRuntime';
 import { classifyTask } from '../services/taskClassifier';
-import { computeTemperature } from '../services/generationProfile';
+import { computeTemperature, setTemperatureModelResolver } from '../services/generationProfile';
+
+// 温度引擎的模型档位注入：generationProfile 现在是纯模块（不再 import
+// configSync/Prisma），模型元数据由本处（已持有 getDynamicModels）注入。
+// 未注入时 computeTemperature 不做模型夹取 —— 与旧行为等价。
+setTemperatureModelResolver((key) => (getDynamicModels() as any)[key]);
 import { getModelCapability, clampTemperature } from '../services/modelCapabilityRegistry';
 import { verifyResponse } from '../services/verification';
 import { createSession, addSessionEvent, updateSession } from '../services/sessionState';
@@ -243,7 +248,16 @@ async function buildAgentChat(
     const cap = await getModelCapability(modelKey);
     resolvedTemperature = clampTemperature(profile.temperature, cap);
   } catch {
-    resolvedTemperature = 0.7;
+    // 原先是 `resolvedTemperature = 0.7` —— 一个硬编码常量。
+    // 那与本段注释声称的「the temperature source is never a hardcoded
+    // constant」直接矛盾，且一旦模型档位解析器异常，**所有请求会静默
+    // 全部退回同一个温度**（创意任务也变确定式）。改为不带 targetModel
+    // 重算：仍然动态，只是跳过模型夹取这一步。
+    resolvedTemperature = clampTemperature(
+      computeTemperature({ ...taskToTempInput(taskClassification), targetModel: undefined }).temperature,
+      { supportsTemperature: true, minTemperature: 0, maxTemperature: 2 } as any,
+    );
+    console.warn('[TEMPERATURE] 温度引擎异常，已回退为不带模型夹取的动态计算');
   }
 
   // Load context — each source is gated by what the task actually needs:
