@@ -21,10 +21,27 @@
 //   3) 文件路径（SQLite 本地）
 //        ./data/cortex.sqlite
 //
+//   4) Cloudflare 绑定（binding）—— **不需要 API key，也不需要连接串**
+//      Cloudflare 把数据库资源挂到 Worker 的 env 对象上，代码只按名字取：
+//        · D1（SQLite）      wrangler.toml [[d1_databases]] binding="CORTEX_D1"
+//                           → env.CORTEX_D1（D1Database 实例）
+//        · Hyperdrive（PG）  wrangler.toml [[hyperdrive]]    binding="CORTEX_HYPER"
+//                           → env.CORTEX_HYPER.connectionString（真正的 PG 连接串
+//                             由 Cloudflare 侧持有，代码里不出现）
+//      本层只记录「形式 + 绑定名」，**不做 IO**；真正的 env[name] 解析发生在
+//      openConnection()（需要 Workers runtime 的 env 对象）。
+//
 // 本文件只做「解析与判定」，不做 IO，因此可在无任何驱动的环境完整单测。
 // ================================================================
 
 export type DbEngine = 'postgres' | 'sqlite' | 'libsql' | 'unknown';
+/**
+ * Cloudflare 数据库绑定类型。
+ * · d1        = D1（Cloudflare 托管 SQLite）
+ * · hyperdrive = Hyperdrive（给现有 PG 做连接池，不改变库本身）
+ * · generic   = 只写了绑定名、未指明类型（由运行时探测 env[name] 的实际形态）
+ */
+export type CfBindingKind = 'd1' | 'hyperdrive' | 'generic';
 
 export interface ConnectionSpec {
   // 注意：**不保存 raw**。原始连接串含口令/token，一旦进入返回值就可能被
@@ -42,6 +59,11 @@ export interface ConnectionSpec {
   filePath: string | null;
   /** PostgreSQL 连接参数 */
   pg: { database: string; port: number | null; ssl: boolean } | null;
+  /**
+   * Cloudflare 绑定信息（仅当输入是绑定形式时非空）。
+   * name 是 wrangler.toml 里的 binding 名，不含任何凭据，可安全脱敏展示。
+   */
+  cfBinding: { kind: CfBindingKind; name: string } | null;
   /** 解析失败原因（用于 admin 页反馈，不含敏感值） */
   error: string | null;
   /**
@@ -65,6 +87,8 @@ export function redactSpec(spec: ConnectionSpec): Record<string, unknown> {
   if (spec.engine === 'postgres' && spec.pg) {
     out.database = spec.pg.database; out.port = spec.pg.port; out.ssl = spec.pg.ssl;
   }
+  // 绑定名不含凭据，可安全投影（Admin 页要显示「这个库来自哪个绑定」）
+  if (spec.cfBinding) out.cfBinding = { kind: spec.cfBinding.kind, name: spec.cfBinding.name };
   // apiKey / normalized 一律不出现在投影里
   return out;
 }
@@ -74,6 +98,16 @@ const SQLITE_PROTOCOLS = /^sqlite(?::|\+file:|:\/\/)/i;
 const FILE_PROTOCOLS = /^file:\/\//i;
 const LIBSQL_PROTOCOLS = /^libsql:\/\//i;
 const APIKEY_PREFIX = /^api[-_]?key:/i;
+// Cloudflare 绑定形式。先按「前缀形式」识别，再校验「绑定名」。
+const CF_BINDING_FORM =
+  /^(?:cf[-_]?binding|cloudflare[-_]?binding|binding|bind)[:=]/i;
+const CF_D1_FORM = /^(?:cf[-_]?)?d1[:=]/i;
+const CF_HYPER_FORM = /^(?:cf[-_]?)?hyper(?:drive)?[:=]/i;
+
+/** 绑定名合法性：Cloudflare binding 名是 JS 标识符，不允许引号/斜杠/空格。 */
+function validBindingName(name: string): boolean {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);   // 形如 CORTEX_D1 / CORTEX_HYPER
+}
 
 /** 从 URL 中安全提取 host，绝不包含 userinfo。 */
 function safeHost(u: string): string | null {
@@ -106,7 +140,7 @@ function qs(url: string, key: string): string | null {
 export function parseConnection(input: unknown, depth = 0): ConnectionSpec {
   const base: ConnectionSpec = {
     engine: 'unknown', authMode: 'unknown', host: null, target: '',
-    apiKey: null, filePath: null, pg: null, error: null, normalized: '',
+    apiKey: null, filePath: null, pg: null, cfBinding: null, error: null, normalized: '',
   };
   if (depth > 2) return { ...base, error: 'endpoint 嵌套过深（疑似循环引用）' };
   if (typeof input !== 'string' || !input.trim()) {
@@ -223,7 +257,35 @@ export function parseConnection(input: unknown, depth = 0): ConnectionSpec {
     };
   }
 
-  return { ...out, error: '无法识别的连接格式：支持 postgres://, sqlite:/file:, libsql://, api-key:+endpoint, 或文件路径' };
+  // ---- 形式 7：Cloudflare 绑定（无 key、无连接串） ----
+  // 形态识别必须放在**最后**：否则像 "d1:xxx" 这种会被前面的
+  // SQLITE_PROTOCOLS 或路径规则抢先匹配成 SQLite 文件。
+  if (CF_D1_FORM.test(raw) || CF_HYPER_FORM.test(raw) || CF_BINDING_FORM.test(raw)) {
+    const kind: CfBindingKind = CF_D1_FORM.test(raw)
+      ? 'd1'
+      : CF_HYPER_FORM.test(raw) ? 'hyperdrive' : 'generic';
+    const m = raw.match(/^(?:cf[-_]?binding|cloudflare[-_]?binding|binding|bind|(?:cf[-_]?)?d1|(?:cf[-_]?)?hyper(?:drive)?)\s*[:=]\s*(.*)$/i);
+    const name = (m?.[1] ?? '').trim().split(/[?&\s]/)[0].trim();
+    if (!name) {
+      return { ...out, engine: 'unknown', authMode: 'none', cfBinding: { kind, name: '' },
+        error: `Cloudflare ${kind} 绑定名为空（形如 ${kind === 'd1' ? 'd1:CORTEX_D1' : 'hyperdrive:CORTEX_HYPER'}）` };
+    }
+    if (!validBindingName(name)) {
+      return { ...out, engine: 'unknown', authMode: 'none', cfBinding: { kind, name },
+        error: `绑定名不是合法标识符：${name}（Cloudflare binding 名只能是字母/数字/_/$，且不以数字开头）` };
+    }
+    // 引擎归属：D1 的引擎是 sqlite；Hyperdrive 的引擎是 postgres。
+    // generic 暂时未知，由运行时探测 env[name] 后确定。
+    const engine: DbEngine = kind === 'd1' ? 'sqlite' : kind === 'hyperdrive' ? 'postgres' : 'unknown';
+    return {
+      ...out, engine, authMode: 'none', cfBinding: { kind, name },
+      host: kind === 'hyperdrive' ? 'cloudflare-hyperdrive' : null,
+      target: name, normalized: raw,
+      error: null,
+    };
+  }
+
+  return { ...out, error: '无法识别的连接格式：支持 postgres://, sqlite:/file:, libsql://, api-key:+endpoint, cloudflare 绑定（d1:/hyperdrive:/binding:），或文件路径' };
 }
 
 /** 判断是否需要 API key 认证（用于 admin 页分区与后续最小权限启用）。 */
@@ -235,6 +297,16 @@ export function requiresApiKey(spec: ConnectionSpec): boolean {
  * 脱敏后的可展示描述：**绝不包含口令、token、文件绝对路径里的敏感段**。
  */
 export function describeSpec(spec: ConnectionSpec): string {
+  // 绑定形式必须**优先**判断：D1 的 engine 也是 sqlite、Hyperdrive 的 engine
+  // 也是 postgres，若按 engine 分支会分别被描述成「SQLite 本地文件」和
+  // 「PostgreSQL @ cloudflare-hyperdrive」—— 那是错的，会把「来自 Cloudflare
+  // 绑定」这件事藏起来，admin 页无法区分。
+  if (spec.cfBinding) {
+    const { kind, name } = spec.cfBinding;
+    if (kind === 'd1') return `Cloudflare D1 绑定（${name}，SQLite）`;
+    if (kind === 'hyperdrive') return `Cloudflare Hyperdrive 绑定（${name} → PostgreSQL）`;
+    return `Cloudflare 绑定（${name}，类型待运行时探测）`;
+  }
   if (spec.engine === 'sqlite') return `SQLite 文件（${spec.filePath === ':memory:' ? '内存' : '本地文件'}）`;
   if (spec.engine === 'postgres') return `PostgreSQL /${spec.pg?.database ?? '?'} @ ${spec.host ?? '?'}${spec.pg?.ssl ? ' (ssl)' : ''}`;
   if (spec.engine === 'libsql') return `libSQL @ ${spec.host ?? '?'}/auth=api-key`;
