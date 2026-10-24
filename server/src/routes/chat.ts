@@ -101,6 +101,7 @@ import { compilePrompt, discoverSkills } from '../services/compiler';
 import { selectSkills, SKILL_HARD_CAP } from '../services/skillSelector';
 import { runPromptRuntime } from '../services/promptRuntime';
 import { classifyTask } from '../services/taskClassifier';
+import { localClassify } from '../services/taskTaxonomy';
 import { computeTemperature, setTemperatureModelResolver } from '../services/generationProfile';
 
 // 温度引擎的模型档位注入：generationProfile 现在是纯模块（不再 import
@@ -233,13 +234,27 @@ async function buildAgentChat(
   // authoritative fallback when PromptRuntime degrades so the
   // temperature source is never a hardcoded constant.
   // ============================================================
+  // 温度输入原先全是写死的常量：tasks 只取单个 taskType、creativity 按
+  // taskType 三档映射、exploration/diversity/structure/consistency 恒为 0.5、
+  // risk 按 taskType 猜。这使 4 项信号退化成恒定偏移 +0.035（等于白算），
+  // creativity 也拿不到分类器已经算出的真实值。
+  //
+  // localClassify（services/taskTaxonomy.ts）本就是**纯函数**——该文件顶部
+  // 零 import，不触库不联网，只在同一段 message 上跑正则。因此这里换真实
+  // 信号不增加 IO，也不增加耗时量级。
+  //
+  // 注意：promptRuntime 在下方 376 行才执行，此处拿不到它的分类结果，
+  // 所以必须自行计算一次（廉价且纯）。
+  // exploration/diversity/structure/consistency 在本地分类里确实没有对应
+  // 维度，保持 0.5 默认 —— 这是「无信号」而非「有信号但不用」，不伪装。
+  const md = localClassify(message);
   const taskToTempInput = (tc: any) => ({
-    tasks: [tc.taskType],
-    creativity: tc.taskType === 'writing' ? 3 : tc.taskType === 'coding' ? 1 : 2,
-    accuracy: tc.needsVerification ? 'high' : 'medium',
+    tasks: md.tasks.length ? md.tasks : [tc.taskType],
+    creativity: typeof md.creativity === 'number' ? md.creativity : 2,
+    accuracy: md.accuracy || (tc.needsVerification ? 'high' : 'medium'),
     exploration: 0.5, diversity: 0.5, structure: 0.5, consistency: 0.5,
-    risk: tc.taskType === 'research' || tc.taskType === 'complex' ? 'medium' : 'low',
-    verification: !!tc.needsVerification,
+    risk: md.risk || (tc.taskType === 'research' || tc.taskType === 'complex' ? 'medium' : 'low'),
+    verification: !!md.verification_required || !!tc.needsVerification,
     targetModel: modelKey,
   });
   let resolvedTemperature: number;
