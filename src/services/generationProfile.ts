@@ -6,7 +6,42 @@
 //   Diversity + Structure + Risk + Verification + Target Model
 // ================================================================
 
-import { getDynamicModels } from './configSync';
+// ================================================================
+// 纯度说明（本次重构，原因见 test/temperatureEngine.test.ts）
+//   原先本文件顶部 `import { getDynamicModels } from './configSync'`，
+//   而 configSync 会在模块加载时实例化 Prisma 客户端。后果：
+//     · 引入本模块 = 引入数据库连接副作用（DB 未配置时满屏 [DB] 噪音）
+//     · computeTemperature 因读取模块级缓存而**不是纯函数**：
+//       同一输入在缓存未就绪/重启前后可能给出不同温度
+//     · 校准表 TEMP_CALIBRATION 未导出，无法独立测试与审查
+//   现改为「依赖注入」：模型元数据由调用方在启动时注入，
+//   未注入时不做模型夹取（与原先「查不到模型条目时原样返回」一致，
+//   不是行为破坏）。
+// ================================================================
+
+/** 模型质量档位（用于温度上限）与速度档位（用于温度下限）。 */
+export interface TemperatureModelMeta {
+  qualityProfile?: number;
+  speedProfile?: number;
+}
+
+/** 解析器：调用方注入；返回 null 表示该模型无档位信息。 */
+export type TemperatureModelResolver = (modelKey: string) => TemperatureModelMeta | null | undefined;
+
+let modelResolver: TemperatureModelResolver | null = null;
+
+/**
+ * 启动时注入模型档位解析器。由已加载 configSync 的调用方（chat.ts /
+ * promptRuntime.ts）调用一次，避免本模块直接依赖数据库层。
+ */
+export function setTemperatureModelResolver(fn: TemperatureModelResolver | null): void {
+  modelResolver = fn;
+}
+
+/** 当前是否已注入解析器（供测试与诊断）。 */
+export function hasTemperatureModelResolver(): boolean {
+  return modelResolver !== null;
+}
 
 export interface GenerationProfile {
   generation_mode: 'deterministic' | 'balanced' | 'creative' | 'exploratory';
@@ -28,7 +63,8 @@ export interface GenerationProfile {
 // ==================== Calibration Table ====================
 // Initial reference (NOT fixed binding to scenario)
 
-const TEMP_CALIBRATION: Record<string, [number, number]> = {
+/** 任务类型 → 温度区间 [min, max]。导出以便独立测试与人工审查。 */
+export const TEMP_CALIBRATION: Record<string, [number, number]> = {
   calculation: [0.10, 0.30],
   mathematical_reasoning: [0.10, 0.30],
   fact_check: [0.15, 0.35],
@@ -218,12 +254,15 @@ export function computeTemperature(input: TemperatureInput): GenerationProfile {
 }
 
 function clampForModel(temp: number, modelKey: string): number {
-  const model = getDynamicModels()[modelKey];
+  // 未注入解析器（纯代码路径 / 单元测试）→ 不做模型夹取，
+  // 与原先「查不到该模型条目时原样返回」的旧行为等价。
+  if (!modelResolver) return temp;
+  const model = modelResolver(modelKey);
   if (!model) return temp;
 
   // Models with very high quality profiles handle higher temp better
-  const quality = (model as any).qualityProfile || 5;
-  const speed = (model as any).speedProfile || 5;
+  const quality = model.qualityProfile ?? 5;
+  const speed = model.speedProfile ?? 5;
 
   // High-quality models can handle up to 1.5; low-quality capped at 1.0
   const modelMax = quality >= 8 ? 1.5 : quality >= 6 ? 1.2 : 1.0;

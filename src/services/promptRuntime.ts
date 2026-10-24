@@ -12,6 +12,8 @@ import { resolveConflicts, type ConflictResult } from './conflictResolver';
 import { composePrompt, type ComposeResult } from './promptComposer';
 import { buildModelRequest, type ModelRequest } from './modelRequestBuilder';
 import { computeTemperature, type GenerationProfile } from './generationProfile';
+// 注意：temperature 引擎为纯模块，模型档位由 chat.ts 注入解析器；
+// 本文件只消费 computeTemperature 的结果。
 import { validateOutput, decideRetry, type OutputValidationResult } from './outputValidation';
 import { queryKnowledge, buildKnowledgeSection, type KnowledgeResult } from './knowledgeRuntime';
 import { webSearch, type SearchResult } from './searchLayer';
