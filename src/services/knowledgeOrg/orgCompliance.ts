@@ -112,16 +112,25 @@ export interface OrganizedKnowledge {
 /**
  * 置信度夹到 [0,1]。越界、NaN、Infinity → 0.5（中性值）。
  *
- * ⚠ 已知限制（与旧系统逐字一致，刻意未在合并期改动）：
- *   JS 的 `Number(null) === 0`、`Number('') === 0`，所以 **null / undefined /
- *   空串会走到 0**，而不是 0.5。后果：AI 漏传 confidence 字段时，该 fact 会被
- *   打成「置信度 0」（语义≈确定为假），从而被下游过滤或降权 —— 这很可能不是
- *   期望行为，但改变它属于**产品语义变更**，不应在一次「合并旧系统能力」的
- *   改动里静默发生。已由测试钉住现状（orgCompliance.test.ts A 段），
- *   若判定应改为 0.5，需单独一轮并同步评估对既有数据的影响。
- *   另注：`Number([]) === 0`、`Number([5]) === 5`，数组输入同样落到此路径。
+ * **缺失值一律返回 0.5**（2026-11 用户明确决策：统一为 0.5）。
+ * 原实现直接走 `Number(v)`，而 JS 里：
+ *   Number(null) === 0、Number('') === 0、Number([]) === 0
+ * 于是「AI 漏传 confidence」会得到 **0** —— 语义≈「确定为假」，
+ * 该 fact 随后会被下游过滤或降权。这与 `Number(undefined) === NaN`
+ * 触发兜底得到的 0.5 **结论相反**，即同为「缺失」却因序列化路径不同
+ * （null vs undefined）而得到截然不同的置信度。
+ *
+ * 现规则：null / undefined / 空串（含纯空白）先判为「缺失」→ 0.5，
+ * 再走数值夹取。这样漏传一律得到中性值，不凭空拔高也不压低。
+ *
+ * 仍走 Number() 路径的边界（未改动，如实记录）：
+ *   · `[5]` → 5 → 越界 → 0.5（可接受）
+ *   · `[]`  → 0（空数组会被当成 0。AI 正常不会返回数组，属可接受残留）
+ *   · `'0.42'` → 0.42（可解析的数字串仍被接受）
  */
 export function clampConfidence(v: unknown): number {
+  if (v === null || v === undefined) return 0.5;
+  if (typeof v === 'string' && v.trim() === '') return 0.5;
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0 || n > 1) return 0.5;
   return n;
