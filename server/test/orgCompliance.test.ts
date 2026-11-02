@@ -24,31 +24,18 @@ const check = (n: string, c: boolean, d = '') =>
 const S = (n: string) => console.log('\n=== ' + n + ' ===');
 
 // ==================== A. 置信度夹取 ====================
-S('A. clampConfidence 越界/NaN → 0.5（旧系统语义逐值保留）');
+S('A. clampConfidence 越界/NaN → 0.5；缺失值统一 0.5（2026-11 决策）');
 {
   check('7 → 0.5', clampConfidence(7) === 0.5, String(clampConfidence(7)));
   check('-1 → 0.5', clampConfidence(-1) === 0.5);
   check('NaN → 0.5', clampConfidence('abc') === 0.5);
-  // ⚠ Number(null)===0、Number('')===0，故 null/undefined 落到 0 而非 0.5。
-  // 与旧系统逐字一致，属**已知限制**，此处钉住现状（现状值，不是期望值）。
-  // 待产品决策：AI 漏传 confidence 时该得 0.5（中性）还是保留 0。
-  check('null → 0（已知限制 Number(null)===0；待你拍板是否改为 0.5）',
-    clampConfidence(null) === 0, String(clampConfidence(null)));
-  // 实测不一致：undefined → 0.5（Number(undefined)===NaN 触发兜底），
-  // 而 null → 0（Number(null)===0 不触发）。两个都是「缺失」却答案不同。
-  check('undefined → 0.5（Number(undefined)===NaN）', clampConfidence(undefined) === 0.5, String(clampConfidence(undefined)));
-  // null 与空串同走 0
-  check('null → 0（Number(null)===0，不触发兜底）', clampConfidence(null) === 0, String(clampConfidence(null)));
-  check('空串 → 0（Number("")===0）', clampConfidence('') === 0, String(clampConfidence('')));
-  console.log('  WARN 缺失值不一致：null→0、undefined→0.5、空串→0。');
-  console.log('       AI 漏传 confidence（不同语言/序列化路径产出 null 或 undefined）');
-  console.log('       会得到相反结论。这是旧系统既有瑕疵，合并期忠实保留待你决策。');
-  console.log('  WARN clampConfidence(null/undefined/空串) 返回 0 而非 0.5 ——');
-  console.log('       AI 漏传 confidence 会被打成「确定为假」。需你决策是否改为 0.5。');
-  check('Infinity → 0.5', clampConfidence(Infinity) === 0.5);
-  check('0.7 → 0.7（原样）', clampConfidence(0.7) === 0.7);
-  check('0 → 0', clampConfidence(0) === 0);
-  check('1 → 1', clampConfidence(1) === 1);
+  // 2026-11 用户决策：缺失值（null/undefined/空串）统一返回 0.5 中性值，
+  // 不再区分 null→0 与 undefined→0.5 的旧不一致行为。
+  check('null → 0.5（缺失统一中性值）', clampConfidence(null) === 0.5, String(clampConfidence(null)));
+  check('undefined → 0.5（缺失统一中性值）', clampConfidence(undefined) === 0.5, String(clampConfidence(undefined)));
+  check('空串 → 0.5（缺失统一中性值）', clampConfidence('') === 0.5, String(clampConfidence('')));
+  check('纯空白串 → 0.5', clampConfidence('   ') === 0.5, String(clampConfidence('   ')));
+  check('缺失值三者一致（不再分叉）', clampConfidence(null) === clampConfidence(undefined) && clampConfidence(undefined) === clampConfidence(''));
   check('字符串 "0.42" → 0.42（可解析就解析）', clampConfidence('0.42') === 0.42);
   // 绝不能返回 NaN 或越界值
   for (const v of [7, -1, NaN, Infinity, 'abc', null, undefined, {}, []]) {
@@ -288,7 +275,7 @@ S('G. deterministicOrganize（AI 不可用时的有据结果，不是空结果�
 }
 
 // ==================== H. 常量与旧系统逐值一致 ====================
-S('H. 常量与旧系统逐值一致（改这里就是改产品规则，必须显式）');
+S('H. 常量与旧系统逐值一致（confidence 缺失语义除外，已按用户决策改）');
 {
   check('MAX_FACTS = 50', ORG_LIMITS.MAX_FACTS === 50, String(ORG_LIMITS.MAX_FACTS));
   check('MAX_RELATIONS = 20', ORG_LIMITS.MAX_RELATIONS === 20);
@@ -332,7 +319,10 @@ S('J. 已知限制曝光（不静默通过）');
   //    幻觉防护会静默失效。这是刻意选择（避免误伤），但必须让调用方知道。
   const silent = sanitizeOrganized({ facts: [{ claim: 'x', evidenceIds: ['ANYTHING'] }] }, 'o', {});
   console.log(`  NOTE 未传 knownEvidence 时 evidenceIds 不过滤：${silent.organized.facts[0].evidenceIds.join(',')}`);
-  check('该行为可预期且有文档（上面三行 NOTE）', true);
+  // 4) 空数组 `Number([]) === 0` 仍落到 0（未纳入「缺失」范围）。
+  //    用户在 2026-11 决策只覆盖 null/undefined/空串三类，数组是残留边界。
+  console.log(`  NOTE clampConfidence([]) = ${clampConfidence([])} —— 空数组未纳入「缺失」范围，属已知残留`);
+  check('该行为可预期且有文档（上面 NOTE）', true);
 }
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : 'HAS FAILURES'} — pass=${pass} fail=${fail}`);

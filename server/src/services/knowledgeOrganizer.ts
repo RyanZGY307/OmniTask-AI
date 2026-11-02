@@ -67,7 +67,12 @@ const BENCHMARK_DOMAINS = ['gsmarena.com', 'notebookcheck.net', 'anandtech.com',
 const FORUM_DOMAINS = ['reddit.com', 'forums.', 'quora.com'];
 const SOCIAL_DOMAINS = ['youtube.com', 'twitter.com', 'x.com', 'facebook.com', 'tiktok.com', 'instagram.com'];
 
+// 与 knowledgeOrg/orgCompliance.ts 的 clampConfidence 保持**同一规则**
+// （缺失值统一 0.5）。此处是私有副本，因为本文件已 @deprecated 且即将删除；
+// 若行为再次分叉，以 orgCompliance.ts 为准。
 function clampConfidence(v: any): number {
+  if (v === null || v === undefined) return 0.5;
+  if (typeof v === 'string' && String(v).trim() === '') return 0.5;
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0 || n > 1) return 0.5;
   return n;
