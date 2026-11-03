@@ -1,0 +1,329 @@
+// OmniTask-Agent 数据模型（docs/interfaces/core-data-model.md 的 Prisma 草案落地）
+// 状态：Phase D M0。宿主侧接入时由 cortex 的 prisma:generate 生成 @prisma/client-agent。
+// 设计约束（2026-10-21 修订）：
+//  - 与宿主四库关系：软引用（conversationId/userId 无跨 schema FK，Q4 待宿主规范确认）
+//  - RiskLevel 档位对齐宿主 R0–R4（tool-contracts §7.1）
+//  - Usage 四分类（provider/derived/estimated/unavailable，缺失不填零）
+//  - v1 Step 串行；并行等待为后续项
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/client-agent"
+}
+
+datasource agentDb {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_AGENT")
+}
+
+enum TaskStatus {
+  queued
+  running
+  waiting_user
+  waiting_approval
+  completed
+  failed
+  canceled
+  budget_exhausted
+}
+
+enum RunStatus {
+  created
+  running
+  waiting_user
+  waiting_approval
+  recovering
+  completed
+  failed
+  canceled
+  timed_out
+  budget_exhausted
+}
+
+enum StepKind {
+  model
+  tool
+  user_input
+  approval_wait
+  checkpoint
+}
+
+enum StepStatus {
+  pending
+  running
+  ok
+  error
+  denied
+  skipped
+  canceled
+  timed_out
+}
+
+enum ModelCallRole {
+  main
+  advisor
+  summarizer
+  verifier
+}
+
+enum ModelTier {
+  light
+  standard
+  strong
+}
+
+enum RiskLevel {
+  r0
+  r1
+  r2
+  r3
+}
+
+enum ApprovalState {
+  pending
+  approved
+  denied
+  expired
+  canceled
+}
+
+enum InputKind {
+  question
+  choice
+  confirm_target
+}
+
+enum InputState {
+  pending
+  answered
+  expired
+  canceled
+}
+
+enum RuleScope {
+  user
+  project
+}
+
+enum RuleKind {
+  allow
+  deny
+}
+
+enum RuleSource {
+  user_explicit
+  approval_generated
+  system_builtin
+}
+
+enum ArtifactKind {
+  file
+  link
+  report
+}
+
+enum TodoStatus {
+  pending
+  in_progress
+  done
+}
+
+enum EventLevel {
+  info
+  warn
+  error
+}
+
+model Task {
+  id             String     @id @default(uuid())
+  conversationId String?    // 软引用宿主 Conversation（1:N，chat-agent-continuity §7.1）
+  userId         String     // v1 归属粒度 = userId + project（workspace 级为后续）
+  projectId      String?
+  title          String
+  objective      String
+  state          TaskStatus @default(queued)
+  depth          String     @default("d2") // d1|d2|d3（DEC-03：Free D1/D2，Pro 可 D3）
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  runs           Run[]
+  artifacts      Artifact[]
+  @@index([conversationId, state])
+}
+
+model Run {
+  id             String     @id @default(uuid())
+  taskId         String
+  state          RunStatus  @default(created)
+  modelTier      ModelTier  @default(standard) // DEC-01 默认起步档
+  budget         Json?      // {maxCostUsd?, maxSteps?, deadlineAt?}
+  checkpointId   String?    // 当前最后 checkpoint
+  resumedFrom    String?    // 本 Run 由哪个 checkpoint 恢复（首版无第二 Run）
+  depth          String     @default("d2")
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  task           Task       @relation(fields: [taskId], references: [id])
+  steps          Step[]
+  events         Event[]
+  checkpoints    Checkpoint[]
+  approvals      Approval[]
+  userInputs     UserInputRequest[]
+  modelCalls     ModelCall[]
+  @@index([taskId, state])
+}
+
+model Step {
+  id             String     @id @default(uuid())
+  runId          String
+  seq            Int        // Run 内单调步号
+  kind           StepKind
+  title          String
+  state          StepStatus @default(pending)
+  toolCallId     String?    // kind=tool 时指向 ToolCall
+  waitingOn      String?    // waiting_user/waiting_approval 时指向请求 ID
+  errorKind      String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime   @default(now())
+  run            Run        @relation(fields: [runId], references: [id])
+  toolCall       ToolCall?  @relation(fields: [toolCallId], references: [id])
+  @@unique([runId, seq])
+  @@index([runId, state])
+}
+
+model ToolCall {
+  id              String     @id @default(uuid())
+  stepId          String?
+  runId           String
+  toolId          String     // ToolSpec.id
+  toolVersion     String     // ToolSpec.semver
+  argsJson        Json
+  state           String     @default("pending") // pending|pending_approval|running|ok|error|denied|timed_out|canceled
+  approvalId      String?
+  idempotencyKey  String     // DEC：stepId:toolCallId（core-data-model §6.4 六机制）
+  attempt         Int        @default(0)
+  resultJson      Json?
+  errorKind       String?
+  durationMs      Int?
+  createdAt       DateTime   @default(now())
+  steps           Step[]
+  @@index([runId, state])
+  @@index([idempotencyKey])
+}
+
+model ModelCall {
+  id                 String       @id @default(uuid())
+  runId              String
+  stepId             String?
+  role               ModelCallRole
+  modelKey           String       // 实际响应模型
+  provider           String
+  usageProvider      Json?        // 供应商原始 usage（原样保留）
+  usageNormalized    Json?        // {input?,output?,cacheRead?,cacheWrite?,reasoning?,other?,source,precision,estimator?}
+  capabilitySnapshot Json         // 本次调用能力（防配置漂移，R-01）
+  modelConfigSnapshot Json        // tier/参数/温度等（DEC-01 档位与思考模式）
+  finishReason       String       // stop|tool_calls|length|aborted|error
+  latencyMs          Int
+  degraded           Json?        // 降级清单（R-01 可追踪）
+  createdAt          DateTime     @default(now())
+  run                Run          @relation(fields: [runId], references: [id])
+  @@index([runId, role])
+}
+
+model Event {
+  id        String    @id @default(uuid())
+  runId     String
+  seq       Int       // 每 Run 单调；append-only
+  type      String    // AgentEvent.type（task-events §7.1 词表）
+  level     EventLevel @default(info)
+  payload   Json
+  ts        DateTime  @default(now())
+  run       Run       @relation(fields: [runId], references: [id])
+  @@unique([runId, seq])
+  @@index([runId, ts])
+}
+
+model Checkpoint {
+  id        String   @id @default(uuid())
+  runId     String
+  version   Int
+  atEventSeq Int     // 快照对应事件水位
+  stateJson Json     // 物化态（projection 输出）
+  createdAt DateTime @default(now())
+  run       Run      @relation(fields: [runId], references: [id])
+  @@unique([runId, version])
+}
+
+model Approval {
+  id             String        @id @default(uuid())
+  runId          String
+  stepId         String?
+  conversationId String?
+  toolFingerprint String       // 工具名+规范参数 hash（防审批重用）
+  riskLevel      RiskLevel
+  summary        String        // 卡片文案（命令/目标/影响）
+  state          ApprovalState @default(pending)
+  decisionBy     String?       // userId（可信身份）
+  decidedAt      DateTime?
+  expiresAt      DateTime      // DEC-02：默认 = Run 终态时刻（单 Run 有效）
+  createdAt      DateTime      @default(now())
+  run            Run           @relation(fields: [runId], references: [id])
+  @@index([state, expiresAt])
+}
+
+model UserInputRequest {
+  id             String     @id @default(uuid())
+  runId          String
+  stepId         String?
+  conversationId String?
+  kind           InputKind
+  prompt         String
+  options        Json?      // [{label,value}]
+  allowCustom    Boolean    @default(true)
+  answer         Json?      // {selected?:string[],custom?:string}
+  state          InputState @default(pending)
+  expiresAt      DateTime?
+  answeredAt     DateTime?
+  createdAt      DateTime   @default(now())
+  run            Run        @relation(fields: [runId], references: [id])
+  @@index([state, expiresAt])
+}
+
+model PermissionRule {
+  id          String     @id @default(uuid())
+  scope       RuleScope  // v1: user|project（workspace 后续）
+  userId      String
+  projectId   String?
+  program     String     // 规范化程序名
+  subcommand  String?    // 前缀粒度
+  kind        RuleKind
+  source      RuleSource
+  enabled     Boolean    @default(true)
+  expiresAt   DateTime?
+  createdAt   DateTime   @default(now())
+  @@unique([userId, scope, program, subcommand, kind])
+}
+
+model Todo {
+  id        String     @id @default(uuid())
+  runId     String
+  seq       Int
+  title     String
+  status    TodoStatus @default(pending)
+  blockedBy String?
+  createdAt DateTime   @default(now())
+  @@unique([runId, seq])
+}
+
+model Artifact {
+  id        String       @id @default(uuid())
+  taskId    String
+  kind      ArtifactKind
+  title     String
+  uri       String       // agent 元数据 URI
+  storageRef String?     // 宿主 WorkspaceFile/fileBridge 引用（实际文件体归宿主，TB-01）
+  stepId    String?
+  version   Int          @default(1)
+  createdAt DateTime     @default(now())
+  task      Task         @relation(fields: [taskId], references: [id])
+  @@index([taskId])
+}

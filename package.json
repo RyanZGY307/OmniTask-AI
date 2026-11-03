@@ -4,7 +4,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "prisma:generate": "prisma generate --schema prisma/schema.prisma && prisma generate --schema prisma/schema-user.prisma && prisma generate --schema prisma/schema-conversation.prisma && prisma generate --schema prisma/schema-knowledge.prisma && prisma generate --schema prisma/schema-overflow.prisma",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma && prisma generate --schema prisma/schema-user.prisma && prisma generate --schema prisma/schema-conversation.prisma && prisma generate --schema prisma/schema-knowledge.prisma && prisma generate --schema prisma/schema-overflow.prisma && prisma generate --schema prisma/schema-agent.prisma",
     "prisma:migrate:user": "prisma migrate dev --schema prisma/schema-user.prisma",
     "prisma:migrate:knowledge": "prisma migrate dev --schema prisma/schema-knowledge.prisma",
     "postinstall": "npm run prisma:generate"
