@@ -9,6 +9,7 @@ const TARGETS = [
   { name: 'conversation', url: process.env.DATABASE_URL_CONVERSATION, sql: 'prisma/migrations-conversation.sql' },
   { name: 'knowledge',    url: process.env.DATABASE_URL_KNOWLEDGE,    sql: 'prisma/migrations-knowledge.sql' },
   { name: 'overflow',     url: process.env.DATABASE_URL_OVERFLOW,     sql: 'prisma/migrations-overflow.sql' },
+  { name: 'agent',        url: process.env.DATABASE_URL_AGENT,        sql: 'prisma/migrations-agent.sql' },
 ];
 
 function connectWithRetry(url, label) {
