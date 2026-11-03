@@ -9,6 +9,7 @@ import { env } from './config';
 
 import authRoutes from './routes/auth';
 import chatRoutes from './routes/chat';
+import agentRoutes from './routes/agent';
 import adminRoutes from './routes/admin';
 import systemRoutes from './routes/system';
 import { isDbSetupRequired } from './services/db';
@@ -146,6 +147,7 @@ app.use('/api', (req: any, res: any, next: any) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/agent', agentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/import', importRoutes);
 app.use('/api/admin/observability', adminObservabilityRoutes);
