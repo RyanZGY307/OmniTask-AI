@@ -4,6 +4,17 @@
 export const EVENT_LEVELS = ['info', 'warn', 'error'] as const;
 export type EventLevel = (typeof EVENT_LEVELS)[number];
 
+/** UserInputRequest 六类输入判别（宿主侧补充声明——agent 源缺失，仅 userInput.ts 引用） */
+export type InputKind =
+  | 'confirm_target'
+  | 'choose_option'
+  | 'ask_text'
+  | 'ask_credential'
+  | 'ask_file'
+  | 'ask_consent';
+
+export type InputState = 'pending' | 'answered' | 'expired' | 'canceled';
+
 export const EVENT_TYPES = [
   'run.created', 'run.depth_decided', 'run.depth_switched', 'run.started',
   'run.compacted', 'run.budget_exhausted', 'run.restored',

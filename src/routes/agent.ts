@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import { prismaEventStore, agentPrisma } from '../events/prismaEventStore';
-import type { EventType, EventLevel } from '../events/types';
+import { prismaEventStore, agentPrisma } from '../agent/events/prismaEventStore';
+import type { EventType, EventLevel } from '../agent/events/types';
 
 const router = Router();
 
