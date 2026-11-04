@@ -1,7 +1,7 @@
 // Agent 事件 SSE 帧编解码（宿主 chat SSE 同族；data 行为 JSON 信封）
 // 帧格式：`event: <type>\ndata: <json>\n\n`；注释行(:)与 retry: 行忽略。
 // 解码器按 chunk 喂入，正确处理 TCP 分片边界（拆分/粘连）。
-import type { AgentEvent } from './types.ts';
+import type { AgentEvent } from './types';
 
 export function encodeFrame(e: AgentEvent): string {
   return `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`;

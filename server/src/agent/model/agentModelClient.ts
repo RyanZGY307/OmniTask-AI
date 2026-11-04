@@ -5,90 +5,19 @@
 // - 工具调用采用文本 Action 协议（SWE-agent 式 ```action\n{...}\n```）
 // - Usage 四分类：provider/derived/estimated/unavailable（缺失不填零）
 
-import { chatWithFallback } from '../services/models';
-import { getDynamicModels, type ModelRegistryEntry } from '../services/configSync';
-import { getModelCapability } from '../services/modelCapabilityRegistry';
+import { chatWithFallback } from '../../services/models';
+import { getDynamicModels, type ModelRegistryEntry } from '../../services/configSync';
+import { getModelCapability } from '../../services/modelCapabilityRegistry';
 
-// --- Local type definitions (from OmniTask-Agent model/types.ts) ---
-
-export type ModelTier = 'light' | 'standard' | 'strong';
-export type ModelRole = 'main' | 'advisor' | 'summarizer' | 'verifier';
-
-export interface ModelRef { tier: ModelTier; modelKey?: string; }
-
-export type UsageSource = 'provider' | 'derived' | 'estimated' | 'unavailable';
-export type UsagePrecision = 'exact' | 'derived' | 'estimate';
-
-export interface UsageBlock {
-  input?: number; output?: number;
-  cacheRead?: number; cacheWrite?: number; reasoning?: number;
-  other?: Record<string, number>;
-  raw?: unknown;                                  
-  source: UsageSource;                            
-  precision: UsagePrecision;
-  estimator?: string;                             
-}
-
-export interface ModelCapability {
-  modelKey: string; provider: string; tier: ModelTier;
-  contextWindow: number; maxOutputTokens: number;
-  streaming: boolean;
-  toolCalling: 'native' | 'prompt_protocol' | 'unsupported';
-  usageFields: Array<'input' | 'output' | 'cache_read' | 'cache_write' | 'reasoning' | 'other'>;
-  thinkingModes: string[];                        
-  supportsFallback: boolean;
-  evidence: 'provider_docs' | 'runtime_observed' | 'host_registry' | 'unverified';
-  observedAt?: string;
-}
-
-export type ModelErrorKind =
-  | 'retryable_transport' | 'rate_limited' | 'context_window_exceeded'
-  | 'content_policy' | 'cost_limit' | 'auth' | 'bad_request'
-  | 'capability_missing' | 'unknown';
-
-export interface ToolSpecRef { name: string; description: string; inputSchema: Record<string, unknown>; }
-
-export interface ChatRequest {
-  role: ModelRole;
-  modelRef: ModelRef;
-  systemPrompt: string;
-  messages: ModelMessage[];
-  tools?: ToolSpecRef[];
-  responseFormat?: 'text' | 'json_object';
-  maxOutputTokens?: number;
-  temperature?: number;
-  thinking?: { mode: string; budgetTokens?: number };
-  abortSignal?: { aborted: boolean };
-  metadata: { runId: string; stepId: string; taskId: string; attempt: number };
-}
-
-export interface ModelMessage { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; toolCallId?: string; name?: string; }
-
-export interface ToolCallRequest { id: string; name: string; args: Record<string, unknown>; }
-
-export interface Degradation { kind: 'thinking_unsupported' | 'streaming_buffered' | 'tools_prompt_protocol' | 'aborted_partial'; detail: string; }
-
-export interface ChatResult {
-  text: string;
-  toolCalls?: ToolCallRequest[];
-  usage: UsageBlock;
-  capabilitySnapshot: ModelCapability;
-  modelRef: ModelRef;                             
-  finishReason: 'stop' | 'tool_calls' | 'length' | 'aborted' | 'error';
-  latencyMs: number;
-  degraded?: Degradation[];
-  errorKind?: ModelErrorKind;
-  simulated?: boolean;
-}
-
-export interface ChatDelta { text?: string; toolCalls?: ToolCallRequest[]; usage?: UsageBlock; }
-
-export interface ModelClient {
-  readonly simulated?: boolean;
-  chat(req: ChatRequest): Promise<ChatResult>;
-  chatStream(req: ChatRequest): AsyncIterable<ChatDelta>;
-  describe(ref: ModelRef): ModelCapability;
-}
+// 契约类型：整体复制自 OmniTask-Agent src/model/types.ts（不重新定义，避免双份漂移）
+import type {
+  ModelTier, ModelRole, ModelRef,
+  UsageSource, UsagePrecision, UsageBlock, ModelCapability, ModelErrorKind,
+  ToolSpecRef, ChatRequest, ModelMessage, ToolCallRequest, Degradation,
+  ChatResult, ChatDelta, ModelClient,
+} from './types';
+// Action 协议解析：直接复用 agent 侧实现（runbook §3-2：不得改协议形态，也不得复制第二份）
+import { parseActionProtocol } from './protocol';
 
 // --- Type adapters: cortex -> agent ---
 
@@ -165,42 +94,6 @@ function toModelCapability(entry: ModelRegistryEntry, cap: Awaited<ReturnType<ty
     evidence: 'host_registry',
     observedAt: new Date().toISOString(),
   };
-}
-
-// --- Action protocol parser ---
-
-function parseActionProtocol(text: string): { calls: ToolCallRequest[]; errors: string[]; residualText: string } {
-  const calls: ToolCallRequest[] = [];
-  const errors: string[] = [];
-  const re = /```action\s*\n([\s\S]*?)```/g;
-  let m: RegExpExecArray | null;
-  let idx = 0;
-
-  while ((m = re.exec(text)) !== null) {
-    const body = m[1].trim();
-    try {
-      const parsed = JSON.parse(body) as { name?: unknown; args?: unknown; id?: unknown };
-      if (typeof parsed.name !== 'string') {
-        errors.push(`action #${idx}: 缺少 name 字段`);
-      } else {
-        calls.push({
-          id: typeof parsed.id === 'string' ? parsed.id : `call_${idx}_${stableId(parsed.name)}`,
-          name: parsed.name,
-          args: (parsed.args ?? {}) as Record<string, unknown>,
-        });
-      }
-    } catch {
-      errors.push(`action #${idx}: 非法 JSON（${body.slice(0, 60)}…）`);
-    }
-    idx++;
-  }
-  return { calls, errors, residualText: text.replace(re, '').trim() };
-}
-
-function stableId(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (Math.imul(h, 31) + name.charCodeAt(i)) | 0;
-  return Math.abs(h).toString(36);
 }
 
 // --- Build system prompt with tool specs ---
