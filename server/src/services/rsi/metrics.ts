@@ -53,6 +53,8 @@ export interface ComputedGroup {
   errorEvents: number;
 }
 
+export type ComputedMetrics = ComputedGroup;
+
 /** 判定口径集中于此：finishReason=error/aborted 或 status 非成功计为失败。 */
 export function isFailure(s: RawSample): boolean {
   const st = (s.status ?? '').toUpperCase();

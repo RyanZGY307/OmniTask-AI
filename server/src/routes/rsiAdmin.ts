@@ -8,7 +8,7 @@ import { Router, Response } from 'express';
 import { prismaKnowledge } from '../services/db';
 import { authMiddleware, adminAuth, AuthRequest } from '../middleware/auth';
 import { can } from '../services/rsi/authorization';
-import { getAsset } from '../services/rsi/assetRegistry';
+import { getAsset, getAssetByKey } from '../services/rsi/assetRegistry';
 import { approveChange, rejectChange, transition, getChange, listChanges } from '../services/rsi/changeRequest';
 import { pause, resume as resumePause, isWorkerPaused, checkPause } from '../services/rsi/systemPause';
 import { releaseVersion, createVersion, getPreviousReleasedVersion, listVersions } from '../services/rsi/assetRegistry';
@@ -86,7 +86,7 @@ router.get('/changes/:id', adminAuth, async (req: AuthRequest, res: Response) =>
   try {
     const change = await getChange(String(req.params.id));
     if (!change) return res.status(404).json({ error: '变更不存在' });
-    const asset = await getAsset(change.assetId === '' ? '' : change.assetId).catch(() => null);
+    const asset = await getAssetByKey(change.assetKey).catch(() => null);
     const versions = await listVersions(change.assetKey, 5);
     res.json({ change, asset, versions });
   } catch { res.status(500).json({ error: '获取变更详情失败' }); }
@@ -251,7 +251,8 @@ router.post('/scan', adminAuth, async (req: AuthRequest, res: Response) => {
 router.get('/provider-configs', adminAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { listRsiProviders } = await import('../services/rsi/rsiProviderConfig');
-    const rows = await listRsiProviders(String(req.query.tier || '') || undefined);
+    const tierQ = String(req.query.tier || '') as 'FREE' | 'PRO' | '';
+    const rows = await listRsiProviders(tierQ || undefined);
     res.json({ configs: rows.map((r) => ({ ...r, apiKeys: (r.apiKeys ?? []).map((k: string) => (k && k.length > 8 ? `...${k.slice(-8)}` : '***')) })) });
   } catch (err) { res.status(500).json({ error: String((err as Error)?.message ?? err) }); }
 });
@@ -269,12 +270,12 @@ router.post('/provider-configs', adminAuth, async (req: AuthRequest, res: Respon
     }
     const { upsertRsiProvider, invalidateRsiProvider } = await import('../services/rsi/rsiProviderConfig');
     const row = await upsertRsiProvider({
-      provider: String(body.provider), tier: String(body.tier), baseUrl: body.baseUrl ? String(body.baseUrl) : undefined,
+      provider: String(body.provider), tier: String(body.tier) as 'FREE' | 'PRO', baseUrl: body.baseUrl ? String(body.baseUrl) : undefined,
       apiKeys: body.apiKeys.filter((k: unknown) => typeof k === 'string' && k) as string[],
       apiLimit: body.apiLimit, carrierLimit: body.carrierLimit, rsiModelLimit: body.rsiModelLimit ?? body.modelLimit,
       enabled: body.enabled !== false,
     });
-    invalidateRsiProvider(String(body.provider), String(body.tier));
+    invalidateRsiProvider(String(body.provider), String(body.tier) as 'FREE' | 'PRO');
     const { primeRsiProviderCache } = await import('../services/rsi/rsiQuotaGate');
     primeRsiProviderCache([row]);
     await writeAudit({ action: 'rsi_provider_config_saved', adminId: actor.id, scope: `${body.provider}:${body.tier}` });
@@ -300,10 +301,11 @@ router.post('/provider-configs/disable', adminAuth, async (req: AuthRequest, res
     if (active > 0) return res.status(409).json({ error: `仍有 ${active} 个 RSI 活动并发占用，不能停用` });
     const { upsertRsiProvider, invalidateRsiProvider } = await import('../services/rsi/rsiProviderConfig');
     const row = await upsertRsiProvider({
-      provider: String(body.provider), tier: String(body.tier),
+      provider: String(body.provider), tier: String(body.tier) as 'FREE' | 'PRO',
       apiKeys: Array.isArray(body.apiKeys) ? body.apiKeys : [], enabled: false,
+      baseUrl: '', apiLimit: undefined, carrierLimit: undefined, rsiModelLimit: undefined,
     });
-    invalidateRsiProvider(String(body.provider), String(body.tier));
+    invalidateRsiProvider(String(body.provider), String(body.tier) as 'FREE' | 'PRO');
     const { primeRsiProviderCache } = await import('../services/rsi/rsiQuotaGate');
     primeRsiProviderCache([row]);
     await writeAudit({ action: 'rsi_provider_config_disabled', adminId: actorOf(req).id, scope: `${body.provider}:${body.tier}` });

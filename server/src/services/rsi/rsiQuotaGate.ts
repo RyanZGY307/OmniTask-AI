@@ -63,8 +63,8 @@ export function acquireRsiGate(input: RsiGateInput): RsiGateResult {
 
   const keys = rsiScopeKeys(input);
   const scopes: GateScopes = {
-    api: { state: ensureApiScope(keys.api), limit: blockOf(row, 'apiLimit') },
-    carrier: { state: ensureCarrierScope(keys.carrier), limit: blockOf(row, 'carrierLimit') },
+    api: { state: ensureApiScope(input.provider, input.tier, keys.api), limit: blockOf(row, 'apiLimit') },
+    carrier: { state: ensureCarrierScope(input.provider, input.tier), limit: blockOf(row, 'carrierLimit') },
     model: { state: ensureModelScope(keys.model), limit: blockOf(row, 'rsiModelLimit') },
   };
   const r = acquireAll(scopes, input.estTokens || 0);

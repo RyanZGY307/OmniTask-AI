@@ -157,7 +157,7 @@ export async function acquireConcurrency(p: LeaseRequest): Promise<LeaseResult> 
 
   return {
     ok: true,
-    handles: acquired.map((a) => ({ scope: a.scope, key: a.key, release: () => releaseLease(a.key) })),
+    handles: acquired.map((a) => ({ scope: a.scope, key: a.key, release: async () => { await releaseLease(a.key); } })),
   };
 }
 

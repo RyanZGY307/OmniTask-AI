@@ -38,6 +38,10 @@ export async function registerAsset(input: {
   return { id: row.id, created: true, currentVersion: 0 };
 }
 
+export async function getAssetByKey(assetKey: string) {
+  return prismaKnowledge.managedAsset.findFirst({ where: { assetKey } });
+}
+
 export async function getAsset(assetType: string, assetKey: string) {
   return prismaKnowledge.managedAsset.findUnique({
     where: { assetType_assetKey: { assetType, assetKey } },
@@ -92,7 +96,7 @@ export function hash16(text: string): string {
 }
 
 export async function getCurrentVersion(assetKey: string) {
-  const asset = await prismaKnowledge.managedAsset.findUnique({ where: { assetKey } });
+  const asset = await prismaKnowledge.managedAsset.findFirst({ where: { assetKey } });
   if (!asset || asset.currentVersion === 0) return null;
   return prismaKnowledge.assetVersion.findUnique({
     where: { assetKey_version: { assetKey, version: asset.currentVersion } },

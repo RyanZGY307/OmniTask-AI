@@ -20,16 +20,24 @@ export async function listExperience(assetKey: string, limit = 10): Promise<Expe
     where: { targetId: assetKey },
     orderBy: { createdAt: 'desc' },
     take: Math.min(limit, 20),
-    select: { id: true, targetId: true, status: true, evaluationReport: { select: { id: true, decision: true, qualityScore: true, createdAt: true } } },
+    select: { id: true, targetId: true, status: true, evaluationId: true, createdAt: true },
   });
-  return rows.map((r) => ({
-    candidateId: r.id,
-    assetKey: r.targetId ?? '',
-    status: r.status,
-    decision: r.evaluationReport?.[0]?.decision ?? 'none',
-    quality: r.evaluationReport?.[0]?.qualityScore ?? undefined,
-    createdAt: r.createdAt,
-  }));
+  const evalIds = rows.map((r) => r.evaluationId).filter((x): x is string => !!x);
+  const evals = evalIds.length
+    ? await prismaKnowledge.evaluationReport.findMany({ where: { id: { in: evalIds } }, select: { id: true, decision: true, qualityScore: true } })
+    : [];
+  const evalMap = new Map(evals.map((e) => [e.id, e]));
+  return rows.map((r) => {
+    const ev = r.evaluationId ? evalMap.get(r.evaluationId) : undefined;
+    return {
+      candidateId: r.id,
+      assetKey: r.targetId ?? '',
+      status: r.status,
+      decision: ev?.decision ?? 'none',
+      quality: ev?.qualityScore ?? undefined,
+      createdAt: r.createdAt,
+    };
+  });
 }
 
 /** 记录一条经验（发布或回滚后调用），写入审计即可查询的痕迹。 */
@@ -37,7 +45,7 @@ export async function recordExperience(input: {
   candidateId: string;
   assetKey: string;
   outcome: 'released' | 'rolled_back' | 'rejected' | 'failed';
-  metrics?: Record<string, number>;
+  metrics?: Record<string, unknown>;
 }): Promise<void> {
   const existing = await prismaKnowledge.evolutionAudit.findFirst({
     where: { candidateId: input.candidateId, action: `exp_${input.outcome}` },

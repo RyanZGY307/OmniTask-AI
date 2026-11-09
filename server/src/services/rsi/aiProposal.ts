@@ -46,12 +46,13 @@ function buildPrompt(req: AiProposalRequest): { system: string; user: string } {
  * RSI 独立额度/并发门：与普通 API 管理共用算法但密钥与配置数据完全独立。
  * 未启用 / 额度类阻塞一律直接拒绝，绝不降级到普通 Provider 配置（任务书硬约束）。
  */
-function checkRsiQuotaOrBlock(req: AiProposalRequest, riskLevel: RiskLevel): string | null {
-  const cfg = getRsiProvider({ provider: process.env.RSI_PROVIDER || 'omnitask', tier: 'PRO' }) ?? null;
+async function checkRsiQuotaOrBlock(req: AiProposalRequest, riskLevel: RiskLevel): Promise<string | null> {
+  const provider = process.env.RSI_PROVIDER || 'omnitask';
+  const cfg = await getRsiProvider(provider, 'PRO');
   if (!cfg) return `rsi_provider_unconfigured`;
   if (cfg.enabled === false) return 'rsi_provider_disabled';
   const gate = acquireRsiGate({
-    provider: (cfg as unknown as { provider: string }).provider ?? (process.env.RSI_PROVIDER ?? 'omnitask'),
+    provider,
     tier: 'PRO',
     apiKey: '',
     modelKey: String(req.assetKey),
@@ -70,7 +71,7 @@ function parseNum(v: string | undefined): number | null {
 export async function proposeCandidate(req: AiProposalRequest, riskLevel: RiskLevel = 'r1'): Promise<AiProposalResult> {
   const { system, user } = buildPrompt(req);
   // 额度/并发门：预算不足即跳过，不烧 token
-  const blocked = checkRsiQuotaOrBlock(req, riskLevel);
+  const blocked = await checkRsiQuotaOrBlock(req, riskLevel);
   if (blocked) return { ok: false, raw: '', reason: blocked, modelUsed: 'rsi-quota-gate' };
   try {
     const raw = await callAgnes(system, user, {
@@ -80,7 +81,7 @@ export async function proposeCandidate(req: AiProposalRequest, riskLevel: RiskLe
       timeoutMs: parseInt(process.env.RSI_PROPOSER_TIMEOUT_MS || '60000', 10) || 60000,
     });
     const parsed = parseProposalStrict(parseJsonLoose(raw), PROPOSAL_ALLOWED_ENUMS);
-    if (!parsed.ok) return { ok: false, raw, reason: parsed.reason };
+    if (parsed.ok === false) return { ok: false, raw, reason: (parsed as { ok: false; reason: string }).reason };
     // 强制回填资产标识，防止模型换目标
     const p = parsed.value;
     p.assetType = req.assetType;

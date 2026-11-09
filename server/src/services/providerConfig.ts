@@ -305,6 +305,15 @@ const MODEL_LIST_MAX_ENTRIES = 200;
 interface ModelListEntry { rows: FetchedModelRow[]; expiresAt: number }
 const modelListCache = new Map<string, ModelListEntry>();
 
+/** 同步读内存中的 ModelConfig（供闸门做轻量检查；查不到返回 null 由调用方自行决定放行/拒绝）。 */
+const modelConfigMem = new Map<string, any>();
+export function getCachedModelConfig(modelKey: string): any | null {
+  return modelConfigMem.get(modelKey) ?? null;
+}
+export function __setCachedModelConfig(modelKey: string, row: any): void {
+  modelConfigMem.set(modelKey, row);
+}
+
 function modelListKey(baseUrl: string, apiKey?: string): string {
   // apiKey 不落全量：指纹足够区分，避免把凭据以明文形式留在内存键里。
   const fp = apiKey

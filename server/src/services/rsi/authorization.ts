@@ -5,12 +5,13 @@
 // ================================================================
 
 import type { Actor, AssetRef, AssetAction, RiskLevel } from './types';
+export type { Actor, AssetRef, RiskLevel, ChangeStatus } from './types';
 import { PROTECTED_TYPES, AUTO_EXPERIMENTABLE } from './types';
 
 export type DenyReason =
   | 'protected_type' | 'not_owner' | 'cross_user' | 'actor_kind'
   | 'action_not_allowed' | 'risk_too_high' | 'state_not_allowed'
-  | 'unregistered_asset' | 'missing_actor';
+  | 'unregistered_asset' | 'missing_actor' | 'not_experimentable';
 
 export interface CanResult {
   allow: boolean;

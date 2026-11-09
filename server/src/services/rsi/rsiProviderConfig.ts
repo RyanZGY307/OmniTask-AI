@@ -7,7 +7,7 @@
 //
 // 纯逻辑（无 DB 依赖）放在 rsiQuota.ts，本文件只负责持久化与缓存。
 // ================================================================
-import { prisma, isDbSetupRequired } from '../db';
+import { prismaKnowledge as prisma, isDbSetupRequired } from '../db';
 import { parseRateLimitBlock } from '../rateLimitParse';
 
 export interface RsiProviderInput {

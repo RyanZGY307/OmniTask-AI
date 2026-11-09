@@ -161,3 +161,19 @@ export function bridgeSignals(src: BridgeSource): RsiSignal[] {
 export function dedupeKey(s: RsiSignal): string {
   return `${s.assetKey}|${s.kind}`;
 }
+
+
+// ---- DB 故障期间的有界内存缓冲（仅降损，不是持久机制）----
+const SIGNAL_BUFFER_MAX = 200;
+const signalBuffer: RsiSignal[] = [];
+export function bufferSignals(signals: RsiSignal[]): number {
+  let n = 0;
+  for (const sig of signals) {
+    if (signalBuffer.length >= SIGNAL_BUFFER_MAX) break;
+    signalBuffer.push(sig);
+    n++;
+  }
+  return n;
+}
+export function bufferedSignalCount(): number { return signalBuffer.length; }
+export function drainSignalBuffer(): RsiSignal[] { return signalBuffer.splice(0, signalBuffer.length); }
