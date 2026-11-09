@@ -1,0 +1,23 @@
+// RSI 子系统统一出口（与 observability/index.ts 同风格）
+export * from './types';
+export * from './authorization';
+export * from './noiseGate';
+export * from './evidenceAssembler';
+export * from './candidateValidator';
+export * from './signalBridge';
+export * from './baselineComparator';
+export * from './experimentRunner';
+export * from './rollout';
+export * from './assetRegistry';
+export * from './changeState';
+export * from './changeRequest';
+export * from './systemPause';
+export * from './rsiProviderConfig';
+export * from './rsiQuotaGate';
+export * from './audit';
+export * from './experienceLibrary';
+export * from './aiProposal';
+export * from './pipeline';
+export * from './queue';
+export * from './scheduler';
+export { executeRsiJob } from './worker';

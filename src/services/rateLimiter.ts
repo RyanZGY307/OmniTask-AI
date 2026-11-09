@@ -11,10 +11,15 @@
 //   - block     当日不可用（请求直接拒绝，触发轮询切到下一个 key/供应商）
 //   - limitRpm  将当日 RPM 降到 tpdLimitRpm 继续放行（限流降级）
 //
-// 全部为内存态（进程内滑动窗口）；重启即清零，不跨进程共享。
+// 额度窗口时区：RATE_WINDOW_TZ（默认 Asia/Shanghai），未设时保持 UTC 兼容旧行为。
+// 并发占用在 RATE_CONCURRENCY=pg 时走 ConcurrencyLease（跨实例，见 concurrencyLease.ts）。
+// 额度字段统一走 rateLimitParse.parseLimitValue：'-'/空=无限制，非法值抛错而非静默无限。
 // 用于「多供应商/API 轮询」时的选择与拒绝判断，防止单一 key 额度用尽
 // 直接报错——到达限制的作用域会被跳过，自动切到下一个可用作用域。
 // ================================================================
+
+import { parseLimitValue } from './rateLimitParse';
+import { acquireConcurrency, releaseLease, activeLeaseKeys, type LeaseRequest } from './concurrencyLease';
 
 export type TpdBehavior = 'block' | 'limitRpm';
 
@@ -56,17 +61,52 @@ interface WindowState {
   parallel: number;
 }
 
-function utcDayKey(now = Date.now()): string {
-  return new Date(now).toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+const WINDOW_TZ = (process.env.RATE_WINDOW_TZ || 'Asia/Shanghai').trim() || 'Asia/Shanghai';
+/** 按配置时区取日期键；时区不可用时回退 UTC（不抛错，限流不能因配置错误整体停摆）。 */
+export function windowTz(): string { return WINDOW_TZ; }
+function dayKeyIn(now: number): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: WINDOW_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
+    return parts; // YYYY-MM-DD
+  } catch { return new Date(now).toISOString().slice(0, 10); }
+}
+/** 次日零点的毫秒数（按配置时区）。 */
+/** 目标时区相对 UTC 的偏移毫秒（按给定时刻计算，兼容 Intl 支持的全部时区）。 */
+function tzOffsetMs(now: number): number {
+  try {
+    const dtf = new Intl.DateTimeFormat('en-CA', {
+      timeZone: WINDOW_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+    const parts = dtf.formatToParts(new Date(now));
+    const pick = (t: string): number => Number(parts.find((p) => p.type === t)?.value ?? '0');
+    const wall = Date.UTC(pick('year'), pick('month') - 1, pick('day'), pick('hour'), pick('minute'), pick('second'));
+    return wall - now;
+  } catch { return 0; }
+}
+/** 距「配置时区」次日零点的毫秒数（用于排队提示与 RPD/TPD 重置提示）。 */
+export function msUntilNextWindowDay(now = Date.now()): number {
+  try {
+    const local = now + tzOffsetMs(now);
+    const d = new Date(local);
+    d.setUTCHours(24, 0, 0, 0);
+    return Math.max(1000, d.getTime() - local);
+  } catch {
+    const dt = new Date(now); dt.setUTCHours(24, 0, 0, 0);
+    return Math.max(1000, dt.getTime() - now);
+  }
 }
 function minuteKey(now = Date.now()): string {
   return String(Math.floor(now / 60_000));
 }
 
-function norm(v: number | undefined | null): number {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return 0; // 0 / undefined / '-' → 无限
-  return n;
+/**
+ * 内部口径：null / '-' / 空 → 0（=无限）；正整数 → 生效额度。
+ * 非法值（负数/小数/非数字字符串）抛错，绝不静默变成 0=无限。
+ */
+function norm(field: string, v: unknown): number {
+  const parsed = parseLimitValue(field, v);
+  return parsed === null ? 0 : parsed;
 }
 
 /**
@@ -81,7 +121,7 @@ export function tryAcquire(state: WindowState, input: AcquireInput): AcquireResu
   const estTokens = Math.max(0, input.estTokens || 0);
   const now = Date.now();
   const mk = minuteKey(now);
-  const dk = utcDayKey(now);
+  const dk = dayKeyIn(now);
 
   // 惰性滚日 / 滚分钟
   if (state.dayKey !== dk) {
@@ -96,13 +136,13 @@ export function tryAcquire(state: WindowState, input: AcquireInput): AcquireResu
     state.tokMin = { minuteKey: mk, count: 0 };
   }
 
-  const rpm = norm(limit.rpm);
-  const tpm = norm(limit.tpm);
-  const rpd = norm(limit.rpd);
-  const maxParallel = norm(limit.maxParallel);
-  const tpd = norm(limit.tpd);
+  const rpm = norm('rpm', limit.rpm);
+  const tpm = norm('tpm', limit.tpm);
+  const rpd = norm('rpd', limit.rpd);
+  const maxParallel = norm('maxParallel', limit.maxParallel);
+  const tpd = norm('tpd', limit.tpd);
   const behavior: TpdBehavior = limit.tpdBehavior === 'limitRpm' ? 'limitRpm' : 'block';
-  const tpdLimitRpm = norm(limit.tpdLimitRpm);
+  const tpdLimitRpm = norm('tpdLimitRpm', limit.tpdLimitRpm);
 
   // ---- TPD 到达判定 ----
   const tpdReached = tpd > 0 && state.dayTokens >= tpd;
@@ -118,9 +158,9 @@ export function tryAcquire(state: WindowState, input: AcquireInput): AcquireResu
   }
 
   // ---- 各维度校验 ----
-  // 并行
+  // 并行（并发满 = 排队等待，**不得**触发自动切换 → 专用 reason）
   if (maxParallel > 0 && state.parallel >= maxParallel) {
-    return { allowed: false, reason: 'rate_limited', effectiveRpm };
+    return { allowed: false, reason: 'max_parallel', effectiveRpm };
   }
   // RPM
   if (effectiveRpm > 0 && state.reqMin.count >= effectiveRpm) {
@@ -163,11 +203,7 @@ function normNum(v: number | undefined | null): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-function msUntilNextUtcDay(now = Date.now()): number {
-  const dt = new Date(now);
-  dt.setUTCHours(24, 0, 0, 0);
-  return Math.max(0, dt.getTime() - now);
-}
+// （窗口重置等待改用时区版 msUntilNextWindowDay）
 
 /**
  * 判定单个作用域的负载等级：
@@ -191,10 +227,10 @@ export function statusOf(state: WindowState, limit: RateLimitBlock | undefined |
   if (tpd > 0 && state.dayTokens >= tpd) return 'busy'; // limitRpm 模式下仍可用但受限
 
   // 当前分钟维度
+  if (par > 0 && state.parallel >= par) return 'blocked'; // 并发满：排队而非降级
   const mBusy =
     (rpm > 0 && state.reqMin.count >= rpm) ||
-    (tpm > 0 && state.tokMin.count >= tpm) ||
-    (par > 0 && state.parallel >= par);
+    (tpm > 0 && state.tokMin.count >= tpm);
   if (mBusy) return 'busy';
 
   // 接近限额（≥80%）
@@ -212,7 +248,7 @@ export function statusOf(state: WindowState, limit: RateLimitBlock | undefined |
 export function msUntilReady(state: WindowState, limit: RateLimitBlock | undefined | null): number {
   if (!limit) return 0;
   const lvl = statusOf(state, limit);
-  if (lvl === 'blocked') return msUntilNextUtcDay();
+  if (lvl === 'blocked') return msUntilNextWindowDay();
   if (lvl === 'busy' || lvl === 'hot') {
     // 分钟维度限制 → 等到下一分钟边界；日维度 → 到次日
     const rpd = normNum(limit.rpd);
@@ -220,7 +256,7 @@ export function msUntilReady(state: WindowState, limit: RateLimitBlock | undefin
     const dailyHit =
       (rpd > 0 && state.dayReq >= rpd) ||
       (tpd > 0 && state.dayTokens >= tpd && limit.tpdBehavior !== 'limitRpm');
-    if (dailyHit) return msUntilNextUtcDay();
+    if (dailyHit) return msUntilNextWindowDay();
     const now = Date.now();
     return Math.max(1000, 60_000 - (now % 60_000));
   }
@@ -234,15 +270,21 @@ const carrierScopes = new Map<string, WindowState>(); // `provider:tier`
 const modelScopes = new Map<string, WindowState>(); // `modelKey`
 
 function newWindowState(): WindowState {
-  const mk = minuteKey();
+  const now = Date.now();
+  const mk = minuteKey(now);
   return {
     reqMin: { minuteKey: mk, count: 0 },
-    dayKey: utcDayKey(),
+    dayKey: dayKeyIn(now),
     dayReq: 0,
     dayTokens: 0,
     tokMin: { minuteKey: mk, count: 0 },
     parallel: 0,
   };
+}
+
+/** 供测试与调用方构造「当前窗口」状态：惰性重置不会误清零预置计数。 */
+export function currentWindowState(): WindowState {
+  return newWindowState();
 }
 
 export function ensureApiScope(provider: string, tier: string, apiKey: string): WindowState {
@@ -298,6 +340,51 @@ export function acquireAll(gates: GateScopes, estTokens = 0): { ok: boolean; rea
   taken.push({ release: () => release(gates.model.state) });
 
   return { ok: true, effectiveRpm: modelRes.effectiveRpm ?? apiRes.effectiveRpm ?? carrierRes.effectiveRpm, released: taken };
+}
+
+/**
+ * PG 模式下的三作用域并发许可（跨实例）。
+ *
+ * 与 acquireAll 的差别：并发占用不写进程内 WindowState.parallel，而是走
+ * ConcurrencyLease（PG 行），因此多实例共享同一账本。RPM/TPM/RPD/TPD 仍是
+ * 进程内滑动窗口（这些是近似账本，跨实例精确化留待后续接入 PG 计数器）。
+ *
+ * PG 不可用 → 拒签（fail-closed），绝不放行。
+ */
+export async function acquireAllPg(
+  gates: GateScopes,
+  estTokens = 0,
+  lease?: { provider: string; tier: string; apiKey: string; modelKey: string; apiMax: number | null; carrierMax: number | null; modelMax: number | null; keyPrefix?: string; ttlMs?: number },
+): Promise<{ ok: boolean; reason?: string; effectiveRpm?: number; released: Array<{ release: () => void }> }> {
+  const mem = acquireAll(gates, estTokens);
+  if (!mem.ok) return { ok: false, reason: mem.reason, released: [] };
+
+  // 内存侧的并行计数立即释放：并联发已由 PG lease 精确持有，避免同一请求被双计。
+  for (const t of mem.released) t.release();
+  if (!lease) return { ok: false, reason: 'db_unavailable', released: [] };
+
+  const req: LeaseRequest = {
+    provider: lease.provider,
+    tier: lease.tier as 'FREE' | 'PRO',
+    apiKey: lease.apiKey,
+    modelKey: lease.modelKey,
+    apiMax: lease.apiMax,
+    carrierMax: lease.carrierMax,
+    modelMax: lease.modelMax,
+    keyPrefix: lease.keyPrefix,
+    ttlMs: lease.ttlMs,
+  };
+  const wanted = activeLeaseKeys(req);
+  if (wanted.length === 0) return { ok: true, effectiveRpm: mem.effectiveRpm, released: [] };
+
+  const r = await acquireConcurrency(req);
+  if (!r.ok) return { ok: false, reason: r.reason ?? 'max_parallel', released: [] };
+
+  return {
+    ok: true,
+    effectiveRpm: mem.effectiveRpm,
+    released: [{ release: () => { for (const h of r.handles) void h.release(); } }],
+  };
 }
 
 // ---------------- admin 编辑后重建（限额配置即时生效） ----------------

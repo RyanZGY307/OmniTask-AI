@@ -15,6 +15,7 @@
 // ================================================================
 
 import { prismaUser } from './db';
+import { parseRateLimitBlock } from './rateLimitParse';
 import { PROVIDER_BASE_URLS } from '../config';
 import { log } from './logger';
 import type { RateLimitBlock } from './rateLimiter';
@@ -241,8 +242,10 @@ export async function upsertProviderConnection(input: UpsertConnectionInput): Pr
     baseUrl,
     baseUrlRoot: input.baseUrlRoot?.trim() || null,
     apiKeys: JSON.stringify(apiKeys),
-    apiLimit: JSON.stringify(input.apiLimit || {}),
-    carrierLimit: JSON.stringify(input.carrierLimit || {}),
+    // 额度字段落库前统一走 parseRateLimitBlock：'-'/空=无限制，
+    // 非法字符抛错（绝不静默变成 0=无限）。见 rateLimitParse.ts。
+    apiLimit: JSON.stringify(parseRateLimitBlock(input.apiLimit || {})),
+    carrierLimit: JSON.stringify(parseRateLimitBlock(input.carrierLimit || {})),
     enabled: input.enabled !== false,
   };
 

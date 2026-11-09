@@ -4,13 +4,22 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { env } from '../config';
-import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { authMiddleware, adminAuth, AuthRequest } from '../middleware/auth';
+import { effectiveRole } from '../services/adminRole';
+import { checkAdminPin } from '../services/adminPin';
+import { rateLimit } from '../middleware/rateLimit';
 
 const router = Router();
 
+// ==================== 暴力破解防护 ====================
+// 登录/重置类端点按 IP 限流：15 次/5 分钟（39.14 阶段0止血 R-04）。
+// 阈值刻意宽松——项目仍在内测，避免影响正常调试；真正上线前应同时改为按
+// email+IP 双维度计数并接入 Redis/DB（多实例各自计数会有绕过空间）。
+const authAttemptLimiter = rateLimit(5 * 60 * 1000, 15);
+
 // ==================== Register ====================
 
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', authAttemptLimiter, async (req: Request, res: Response) => {
   try {
     const { email, username, password, region, language, currency } = req.body;
 
@@ -49,7 +58,8 @@ router.post('/register', async (req: Request, res: Response) => {
         if (!existingByEmail.isActive) {
           return res.status(403).json({ error: '账号已被禁用' });
         }
-        const token = jwt.sign({ id: existingByEmail.id, role: existingByEmail.role }, env.JWT_SECRET, { expiresIn: '30d' });
+        const role0 = effectiveRole(existingByEmail.username, existingByEmail.role);
+        const token = jwt.sign({ id: existingByEmail.id, role: role0 }, env.JWT_SECRET, { expiresIn: '30d' });
         await prisma.user.update({ where: { id: existingByEmail.id }, data: { updatedAt: new Date() } });
         return res.status(200).json({
           token,
@@ -59,7 +69,7 @@ router.post('/register', async (req: Request, res: Response) => {
             email: existingByEmail.email,
             username: existingByEmail.username,
             avatar: existingByEmail.avatar,
-            role: existingByEmail.role,
+            role: role0,
             region: existingByEmail.region,
             language: existingByEmail.language,
             currency: existingByEmail.currency,
@@ -129,7 +139,7 @@ router.post('/register', async (req: Request, res: Response) => {
 
 // ==================== Enter (unified login-or-register) ====================
 
-router.post('/enter', async (req: Request, res: Response) => {
+router.post('/enter', authAttemptLimiter, async (req: Request, res: Response) => {
   try {
     const { username, email, password, region, language, currency } = req.body;
 
@@ -257,7 +267,7 @@ router.post('/enter', async (req: Request, res: Response) => {
 
 // ==================== Login ====================
 
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', authAttemptLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
@@ -302,8 +312,9 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(403).json({ error: '账号已被禁用' });
     }
 
+    const role = effectiveRole(user.username, user.role);
     const token = jwt.sign(
-      { id: user.id, role: user.role },
+      { id: user.id, role },
       env.JWT_SECRET,
       { expiresIn: '30d' },
     );
@@ -320,7 +331,7 @@ router.post('/login', async (req: Request, res: Response) => {
         email: user.email,
         username: user.username,
         avatar: user.avatar,
-        role: user.role,
+        role,
         region: user.region,
         language: user.language,
         currency: user.currency,
@@ -351,10 +362,24 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res: Response) => {
     });
 
     if (!user) return res.status(404).json({ error: '用户不存在' });
-    res.json({ user });
+    // ADMIN_USERNAMES 名单中的账号在响应中同样体现为管理员 role
+    res.json({ user: { ...user, role: effectiveRole(user.username, user.role) } });
   } catch {
     res.status(500).json({ error: '获取用户信息失败' });
   }
+});
+
+// ==================== Admin Page PIN Gate ====================
+// 进入后台管理页的第二道门槛：除管理员身份外，还需输入部署环境变量
+// ADMIN_ACCESS_PIN 中的六位数密码。仅管理员账号可调用本接口校验。
+
+router.post('/admin-verify', authMiddleware, adminAuth, (req: AuthRequest, res: Response) => {
+  const result = checkAdminPin(req.body?.pin);
+  if (result === 'unconfigured') {
+    return res.status(503).json({ error: '服务端未配置 ADMIN_ACCESS_PIN，请检查部署环境变量' });
+  }
+  if (result !== 'ok') return res.status(401).json({ error: '密码错误' });
+  res.json({ ok: true });
 });
 
 // ==================== Update Profile ====================
@@ -424,7 +449,7 @@ router.put('/password', authMiddleware, async (req: AuthRequest, res: Response) 
 
 // ==================== Forgot Password ====================
 
-router.post('/forgot-password', async (req: Request, res: Response) => {
+router.post('/forgot-password', authAttemptLimiter, async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: '请输入邮箱' });
@@ -442,8 +467,12 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
       data: { passwordHash: `reset:${resetToken}:${user.passwordHash}` },
     });
 
-    console.log(`[PASSWORD RESET] Token for ${email}: ${resetToken}`);
-    console.log(`[PASSWORD RESET] URL: ${process.env.CLIENT_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`);
+    // 令牌不回显到日志：日志可被转发/备份/他人查看，等于把账号接管凭证公开。
+    // 生产环境应改为邮件发送；本地调试可用 FORGOT_PASSWORD_DEBUG=1 显式开启打印。
+    if (process.env.FORGOT_PASSWORD_DEBUG === '1') {
+      console.log(`[PASSWORD RESET] Token for ${email}: ${resetToken}`);
+      console.log(`[PASSWORD RESET] URL: ${process.env.CLIENT_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`);
+    }
 
   } catch (err) {
     console.error('Forgot password error:', err);
@@ -453,7 +482,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
 
 // ==================== Reset Password ====================
 
-router.post('/reset-password', async (req: Request, res: Response) => {
+router.post('/reset-password', authAttemptLimiter, async (req: Request, res: Response) => {
   try {
     const { token, password } = req.body;
     if (!token || !password) return res.status(400).json({ error: '缺少参数' });

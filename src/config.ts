@@ -18,23 +18,25 @@ export const PROVIDER_BASE_URLS: Record<string, string> = {
 export const AGNES_MODEL = 'agnes-3.0-flash';
 
 // ================================================================
-// 数据库连接串：来源已改为管理页维护的本地加密文件，不再读部署环境变量。
-// 见 services/systemConfig.ts 的引导说明。
+// 数据库连接串：直接读取部署环境变量 DATABASE_URL_<DOMAIN>
+// （多数据库混合架构：USER / CONVERSATION / KNOWLEDGE / OVERFLOW）。
+// 未配置时为 undefined（setup 模式），由 isDbSetupRequired 拦截业务路由。
 // ================================================================
-import { getDbConnection, loadSystemConfigSync } from './services/systemConfig';
-loadSystemConfigSync();
-const _dbUser = getDbConnection('user');
-const _dbKnowledge = getDbConnection('knowledge');
 
 export const env = {
   PORT: parseInt(process.env.PORT || '3001'),
-  // 未配置时为 undefined（setup 模式）；原先是直接读 process.env
-  DATABASE_URL_USER: _dbUser ?? undefined,
-  DATABASE_URL_KNOWLEDGE: _dbKnowledge ?? undefined,
+  DATABASE_URL_USER: process.env.DATABASE_URL_USER,
+  DATABASE_URL_KNOWLEDGE: process.env.DATABASE_URL_KNOWLEDGE,
   JWT_SECRET: process.env.JWT_SECRET || 'cortex-jwt-secret-change-me',
   CLIENT_URL: process.env.CLIENT_URL || '*',
   ADMIN_EMAIL: process.env.ADMIN_EMAIL || 'admin@cortex.ai',
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'admin123',
+  // 管理员账号名单（逗号分隔的用户名）：名单中的账号登录后自动视为管理员，
+  // 前端侧栏的后台管理入口只对管理员显示，名单账号无需改数据库即可出现入口。
+  ADMIN_USERNAMES: (process.env.ADMIN_USERNAMES || '').split(',').map((s) => s.trim()).filter(Boolean),
+  // 进入后台管理页时需额外输入的六位数密码（部署环境变量配置），
+  // 与管理员身份共同构成 /admin 的双重门槛。
+  ADMIN_ACCESS_PIN: process.env.ADMIN_ACCESS_PIN || '',
   // AIHubMix API Key (MANDATORY in production)
   // Model selection
   AGNES_MODEL: 'agnes-3.0-flash',

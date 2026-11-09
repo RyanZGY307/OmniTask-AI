@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config';
 import { prisma } from '../services/db';
+import { effectiveRole } from '../services/adminRole';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -54,7 +55,8 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
     id: user.id,
     email: user.email,
     username: user.username,
-    role: user.role,
+    // ADMIN_USERNAMES 名单中的账号自动视为管理员（SUPER_ADMIN 不降级）
+    role: effectiveRole(user.username, user.role),
     subscriptionTier: user.subscriptionTier,
     region: user.region,
     language: user.language,

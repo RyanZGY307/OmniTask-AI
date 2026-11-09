@@ -59,6 +59,10 @@ import importRoutes from './routes/import';
 import expressionRoutes from './routes/expression';
 import promptRoutes from './routes/prompt';
 import { initWorkerPool } from './services/workerPool';
+import rsiRoutes from './routes/rsiAdmin';
+import { startRsiScheduler } from './services/rsi/scheduler';
+import { listRsiProviders } from './services/rsi/rsiProviderConfig';
+import { primeRsiProviderCache } from './services/rsi/rsiQuotaGate';
 import { startMemoryCompressionWorker, stopMemoryCompressionWorker } from './services/memoryManager/worker';
 import { cleanupSessions } from './services/sessionState';
 import mediaRoutes from './routes/media';
@@ -135,6 +139,10 @@ app.get('/api/health', async (req, res) => {
 // system 路由先于守卫挂载，否则 setup 端点自己也会被 503 挡掉。
 // ================================================================
 app.use('/api/system', systemRoutes);
+// Controlled RSI admin API. Mounted BEFORE the DB-setup gate so the setup
+// console can always inspect/act on the lifecycle layer once configured;
+// every handler inside is authMiddleware + adminAuth guarded itself.
+app.use('/api/rsi', rsiRoutes);
 app.use('/api', (req: any, res: any, next: any) => {
   if (isDbSetupRequired()) {
     return res.status(503).json({
@@ -313,6 +321,16 @@ async function startup() {
     console.warn('[BOOT] Worker pool init warning:', err),
   );
 
+  // Controlled RSI: signal scan (advisory-locked) + pause expiry + rollout monitor.
+  // Disabled entirely by RSI_SCHEDULER=off; paused globally the scan no-ops.
+  if (process.env.RSI_SCHEDULER !== 'off') {
+    try {
+      startRsiScheduler();
+    } catch (err) {
+      console.warn('[BOOT] RSI scheduler init warning:', err);
+    }
+  }
+
   // Knowledge self-repair lifecycle: periodic refresh scheduler. Enqueues
   // due RefreshTask rows; the worker pool (above) claims + executes them.
   // Bypassed entirely when KNOWLEDGE_LIFECYCLE_ENABLED=false.
@@ -394,6 +412,10 @@ async function startup() {
     console.log(`[OBS] 观测中心调度已注册：metrics=${OBS_COLLECT_MS}ms storage=${OBS_STORAGE_MS}ms summary=${OBS_SUMMARY_MS}ms purge=60s`);
   }
 
+  // Controlled RSI: prime the sync quota-gate cache at boot (acquireRsiGate reads only this cache).
+  listRsiProviders()
+    .then((rows) => { primeRsiProviderCache(rows); console.log(`[RSI] provider cache primed rows=${rows.length}`); })
+    .catch((err) => console.warn('[BOOT] RSI provider cache prime warning:', err));
   app.listen(env.PORT, () => console.log(`[BOOT] OmniTask server running on port ${env.PORT}`));
 }
 
