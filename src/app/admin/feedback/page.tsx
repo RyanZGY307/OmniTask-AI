@@ -68,7 +68,7 @@ export default function AdminFeedbackPage() {
               <div className="text-center text-muted py-8 glass-card-sm">暂无反馈</div>
             ) : feedbacks.map((fb, i) => (
               <div key={fb.id} onClick={() => { setSelected(fb); setReply(fb.reply || ''); }}
-                className={`glass-card-sm p-4 cursor-pointer transition-all anim-fade-up ${selected?.id === fb.id ? 'ring-2 ring-accent/50' : 'hover:bg-surface-hover/50'}`}
+                className={`glass-card-sm p-4 cursor-pointer transition-[background-color,border-color,box-shadow,opacity,transform,color] anim-fade-up ${selected?.id === fb.id ? 'ring-2 ring-accent/50' : 'hover:bg-surface-hover/50'}`}
                 style={{ animationDelay: `${i * 0.03}s` }}>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
@@ -100,7 +100,7 @@ export default function AdminFeedbackPage() {
                     {selected.attachments.map((att: any, j: number) => (
                       att.type === 'image' ? (
                         <a key={j} href={att.data} target="_blank" rel="noopener noreferrer">
-                          <img src={att.data} alt={att.name} className="w-24 h-24 object-cover rounded-card border border-border hover:ring-2 hover:ring-accent/50 transition-all" />
+                          <img src={att.data} alt={att.name} className="w-24 h-24 object-cover rounded-card border border-border hover:ring-2 hover:ring-accent/50 transition-[background-color,border-color,box-shadow,opacity,transform,color]" />
                         </a>
                       ) : (
                         <video key={j} src={att.data} controls className="w-48 rounded-card border border-border" />

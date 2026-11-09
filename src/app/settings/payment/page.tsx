@@ -141,7 +141,7 @@ function PaymentContent() {
                     const p = prices?.[selectedTier]?.[m];
                     return (
                       <button key={m} onClick={() => setMonths(m)}
-                        className={`py-2 rounded-card text-sm font-medium transition-all anim-press ${months === m ? 'bg-accent text-on-accent' : 'glass-card-sm text-muted hover:text-primary'}`}>
+                        className={`py-2 rounded-card text-sm font-medium transition-[background-color,border-color,box-shadow,opacity,transform,color] anim-press ${months === m ? 'bg-accent text-on-accent' : 'glass-card-sm text-muted hover:text-primary'}`}>
                         {m === 12 ? '1年' : `${m}月`}
                         <div className="text-xs mt-0.5">{p?.formatted || '...'}</div>
                       </button>
@@ -164,7 +164,7 @@ function PaymentContent() {
               <div className="grid grid-cols-2 gap-2">
                 {paymentMethods.map(m => (
                   <button key={m.method} onClick={() => setPaymentMethod(m.method)}
-                    className={`py-3 rounded-card text-sm font-medium transition-all anim-press ${paymentMethod === m.method ? 'bg-accent/10 border border-accent/30 text-accent' : 'glass-card-sm text-muted hover:text-primary'}`}>
+                    className={`py-3 rounded-card text-sm font-medium transition-[background-color,border-color,box-shadow,opacity,transform,color] anim-press ${paymentMethod === m.method ? 'bg-accent/10 border border-accent/30 text-accent' : 'glass-card-sm text-muted hover:text-primary'}`}>
                     {m.label}
                     {m.hasFee && <div className="text-xs text-warning mt-0.5">+{m.feePercent}% 手续费</div>}
                   </button>
@@ -193,7 +193,7 @@ function PaymentContent() {
             </div>
 
             <button onClick={handleSubmitPayment} disabled={!paymentMethod || submitting}
-              className="w-full py-3 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-all disabled:opacity-30 anim-hover-scale">
+              className="w-full py-3 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-[background-color,border-color,box-shadow,opacity,transform,color] disabled:opacity-30 anim-hover-scale">
               {submitting ? '提交中...' : '确认支付'}
             </button>
             <div className="text-xs text-center text-muted">汇率仅供参考，以实际支付时为准</div>
@@ -220,9 +220,9 @@ function PaymentContent() {
               <p className="text-sm text-muted mb-3">付款后请上传付款证明</p>
               <textarea value={proofText} onChange={(e) => setProofText(e.target.value)}
                 placeholder="粘贴付款截图的文字内容、交易号、或截图描述..."
-                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 h-24 resize-none mb-3 transition-all" />
+                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 h-24 resize-none mb-3 transition-[background-color,border-color,box-shadow,opacity,transform,color]" />
               <button onClick={handleUploadProof} disabled={!proofText.trim() || submitting}
-                className="w-full py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-all disabled:opacity-30 anim-hover-scale">
+                className="w-full py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-[background-color,border-color,box-shadow,opacity,transform,color] disabled:opacity-30 anim-hover-scale">
                 {submitting ? 'AI 审核中...' : '提交审核'}
               </button>
             </div>

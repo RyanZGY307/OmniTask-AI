@@ -104,14 +104,14 @@ function UsageTab() {
       {loadError && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
           <span style={{ fontSize: 12, color: 'var(--warning)' }}>{loadError}（已显示零值数据）</span>
-          <button onClick={load} style={{ fontSize: 12, background: 'var(--surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>重试</button>
+          <button onClick={load} style={{ fontSize: 12, background: 'var(--surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 'calc(var(--radius-card) - 14px)', padding: '4px 10px', cursor: 'pointer' }}>重试</button>
         </div>
       )}
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h3 style={{ fontSize: 16, fontWeight: 600 }}>AI Usage</h3>
         <select value={days} onChange={(e) => setDays(Number(e.target.value))}
-          className="ui-select" style={{ padding: '6px 10px', fontSize: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)' }}>
+          className="ui-select" style={{ padding: '6px 10px', fontSize: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'calc(var(--radius-card) - 14px)', color: 'var(--text-primary)' }}>
           <option value={1}>24 hours</option>
           <option value={7}>7 days</option>
           <option value={30}>30 days</option>
@@ -256,7 +256,7 @@ export default function SettingsPage() {
         <div className="flex gap-1 mb-6 anim-fade-up" style={{ background: 'var(--surface)', borderRadius: 10, padding: 3 }}>
           <button
             onClick={() => setActiveTab('settings')}
-            className="flex-1 py-2 text-sm rounded-card transition-all duration-200"
+            className="flex-1 py-2 text-sm rounded-card transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200"
             style={{
               background: activeTab === 'settings' ? 'var(--bg)' : 'transparent',
               color: activeTab === 'settings' ? 'var(--text-primary)' : 'var(--text-muted)',
@@ -267,7 +267,7 @@ export default function SettingsPage() {
           </button>
           <button
             onClick={() => setActiveTab('usage')}
-            className="flex-1 py-2 text-sm rounded-card transition-all duration-200"
+            className="flex-1 py-2 text-sm rounded-card transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200"
             style={{
               background: activeTab === 'usage' ? 'var(--bg)' : 'transparent',
               color: activeTab === 'usage' ? 'var(--text-primary)' : 'var(--text-muted)',
@@ -345,13 +345,13 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted">{t('stg.voice')}</span>
                   <button type="button" role="switch" aria-checked={enableVoice} aria-label={t('stg.voice')} onClick={() => setEnableVoice(!enableVoice)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full" style={{ transitionTimingFunction: 'cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
-                    <span className={`pointer-events-none relative block h-6 w-11 rounded-full transition-colors ${enableVoice ? 'bg-accent/30' : 'bg-surface-hover'}`}><span className="absolute top-0.5 h-5 w-5 rounded-full transition-all duration-300 shadow-sm" style={{ transitionTimingFunction: 'cubic-bezier(0.34, 1.56, 0.64, 1)', left: enableVoice ? '22px' : '2px', background: enableVoice ? 'var(--accent)' : 'var(--text-muted)' }} /></span>
+                    <span className={`pointer-events-none relative block h-6 w-11 rounded-full transition-colors ${enableVoice ? 'bg-accent/30' : 'bg-surface-hover'}`}><span className="absolute top-0.5 h-5 w-5 rounded-full transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 shadow-sm" style={{ transitionTimingFunction: 'cubic-bezier(0.34, 1.56, 0.64, 1)', left: enableVoice ? '22px' : '2px', background: enableVoice ? 'var(--accent)' : 'var(--text-muted)' }} /></span>
                   </button>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted">{t('stg.webSearch')}</span>
                   <button type="button" role="switch" aria-checked={enableSearch} aria-label={t('stg.webSearch')} onClick={() => setEnableSearch(!enableSearch)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full" style={{ transitionTimingFunction: 'cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
-                    <span className={`pointer-events-none relative block h-6 w-11 rounded-full transition-colors ${enableSearch ? 'bg-accent/30' : 'bg-surface-hover'}`}><span className="absolute top-0.5 h-5 w-5 rounded-full transition-all duration-300 shadow-sm" style={{ transitionTimingFunction: 'cubic-bezier(0.34, 1.56, 0.64, 1)', left: enableSearch ? '22px' : '2px', background: enableSearch ? 'var(--accent)' : 'var(--text-muted)' }} /></span>
+                    <span className={`pointer-events-none relative block h-6 w-11 rounded-full transition-colors ${enableSearch ? 'bg-accent/30' : 'bg-surface-hover'}`}><span className="absolute top-0.5 h-5 w-5 rounded-full transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 shadow-sm" style={{ transitionTimingFunction: 'cubic-bezier(0.34, 1.56, 0.64, 1)', left: enableSearch ? '22px' : '2px', background: enableSearch ? 'var(--accent)' : 'var(--text-muted)' }} /></span>
                   </button>
                 </div>
               </div>
@@ -383,7 +383,7 @@ export default function SettingsPage() {
             {saveError && (
               <div className="mb-3 px-4 py-2.5 rounded-card bg-error/10 border border-error/20 text-error text-xs anim-fade-down">{saveError}</div>
             )}
-            <button onClick={handleSave} disabled={saving} className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent-hover transition-all duration-200 disabled:opacity-50 anim-fade-up anim-delay-5 anim-hover-scale" style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}>
+            <button onClick={handleSave} disabled={saving} className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent-hover transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 disabled:opacity-50 anim-fade-up anim-delay-5 anim-hover-scale" style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}>
               {saving ? t('stg.saving') : t('stg.saveSettings')}
             </button>
 

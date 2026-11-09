@@ -56,7 +56,7 @@ export default function ForgotPasswordPage() {
             {error && <p className="text-xs text-error text-center">{error}</p>}
 
             <button type="submit" disabled={loading}
-              className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-all disabled:opacity-50"
+              className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-[background-color,border-color,box-shadow,opacity,transform,color] disabled:opacity-50"
               style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}>
               {loading ? '发送中...' : '发送重置链接'}
             </button>

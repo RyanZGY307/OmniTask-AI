@@ -79,7 +79,7 @@ export default function FeedbackPage() {
               <div className="flex gap-2">
                 {[{ key: 'bug', label: 'Bug 反馈' }, { key: 'feature', label: '功能建议' }, { key: 'other', label: '其他' }].map(t => (
                   <button key={t.key} onClick={() => setType(t.key)}
-                    className={`px-3 py-1.5 rounded-capsule text-xs transition-all anim-press ${type === t.key ? 'bg-accent text-on-accent' : 'glass-card-sm text-muted hover:text-primary'}`}>
+                    className={`px-3 py-1.5 rounded-capsule text-xs transition-[background-color,border-color,box-shadow,opacity,transform,color] anim-press ${type === t.key ? 'bg-accent text-on-accent' : 'glass-card-sm text-muted hover:text-primary'}`}>
                     {t.label}
                   </button>
                 ))}
@@ -89,13 +89,13 @@ export default function FeedbackPage() {
             <div className="mb-4">
               <label className="block text-sm text-muted mb-1.5">标题</label>
               <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="简要描述问题..."
-                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-all" />
+                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-[background-color,border-color,box-shadow,opacity,transform,color]" />
             </div>
 
             <div className="mb-4">
               <label className="block text-sm text-muted mb-1.5">详细描述</label>
               <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="请详细描述遇到的问题、复现步骤等..."
-                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 h-32 resize-none transition-all" />
+                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 h-32 resize-none transition-[background-color,border-color,box-shadow,opacity,transform,color]" />
             </div>
 
             <div className="mb-4">
@@ -124,7 +124,7 @@ export default function FeedbackPage() {
             </div>
 
             <button onClick={handleSubmit} disabled={submitting}
-              className="w-full py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-all disabled:opacity-50 anim-hover-scale">
+              className="w-full py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-[background-color,border-color,box-shadow,opacity,transform,color] disabled:opacity-50 anim-hover-scale">
               {submitting ? '提交中...' : '提交反馈'}
             </button>
           </div>

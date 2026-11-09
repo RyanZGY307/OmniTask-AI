@@ -100,7 +100,7 @@ export default function LocalizationPage() {
         <p className="text-sm text-muted mb-5 anim-fade-up">{t('loc.subtitle')}</p>
 
         <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('loc.searchPh')}
-          className="w-full bg-surface border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 mb-5 transition-all" />
+          className="w-full bg-surface border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 mb-5 transition-[background-color,border-color,box-shadow,opacity,transform,color]" />
 
         {/* 界面语言 */}
         <section className="liquid-glass p-5 mb-5 anim-fade-up">
@@ -111,7 +111,7 @@ export default function LocalizationPage() {
           <div className="max-h-72 overflow-y-auto space-y-1">
             {languages.map((l, i) => (
               <button key={l.code} onClick={() => selectLanguage(l.code)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-all anim-fade-up ${settings.language === l.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-[background-color,border-color,box-shadow,opacity,transform,color] anim-fade-up ${settings.language === l.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}
                 style={{ animationDelay: `${Math.min(i, 12) * 0.02}s`, opacity: 0 }}>
                 <span className="text-sm flex-1">{l.nativeName}</span>
                 <span className="text-xs text-muted">{l.englishName}</span>
@@ -131,7 +131,7 @@ export default function LocalizationPage() {
           <div className="max-h-72 overflow-y-auto space-y-1">
             {regions.map((r, i) => (
               <button key={r.code} onClick={() => selectRegion(r.code)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-all anim-fade-up ${settings.region === r.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-[background-color,border-color,box-shadow,opacity,transform,color] anim-fade-up ${settings.region === r.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}
                 style={{ animationDelay: `${Math.min(i, 12) * 0.02}s`, opacity: 0 }}>
                 <span className="text-lg">{r.flag}</span>
                 <span className="text-sm flex-1">{r.name}</span>
@@ -159,7 +159,7 @@ export default function LocalizationPage() {
               <div className="space-y-1">
                 {list.map((c) => (
                   <button key={c.code} onClick={() => selectCurrency(c.code)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-all ${settings.currency === c.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}>
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-[background-color,border-color,box-shadow,opacity,transform,color] ${settings.currency === c.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}>
                     <span className="text-sm w-10">{c.symbol}</span>
                     <span className="text-sm flex-1">{c.name} · {c.nameEn}</span>
                     <span className="text-xs text-muted">{c.code}</span>

@@ -4,15 +4,18 @@ import { useRouter } from 'next/navigation';
 import { isLoggedIn } from '@/lib/auth';
 import { useAuthStore } from '@/store/authStore';
 import AdminSidebar from '@/components/AdminSidebar';
+import AdminPinGate from '@/components/admin/AdminPinGate';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { loadUser, user } = useAuthStore();
   const [mounted, setMounted] = useState(false);
+  const [pinOk, setPinOk] = useState(false);
 
   useEffect(() => {
     loadUser();
     if (!isLoggedIn()) { router.replace('/onboarding'); return; }
+    setPinOk(sessionStorage.getItem('cortex_admin_pin_ok') === '1');
     setMounted(true);
   }, []);
 
@@ -21,6 +24,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }, [mounted, user]);
 
   if (!mounted || !user) return <div className="h-screen flex items-center justify-center bg-bg"><div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full anim-spin" /></div>;
+
+  // 第二道门槛：管理员身份之外，还需输入环境变量中的六位管理密码（会话级）
+  if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+    if (!pinOk) return <AdminPinGate onOk={() => setPinOk(true)} />;
+  }
 
   return (
     <div className="h-screen flex bg-bg">

@@ -203,7 +203,7 @@ function SpreadsheetPreview({ model }: { model: any }) {
             <button
               key={i}
               onClick={() => { setActive(i); setQ(''); }}
-              className={`px-2.5 py-1 rounded-capsule text-[11px] transition-all ${i === active ? 'bg-accent/15 text-accent border border-accent/30' : 'text-muted border border-transparent hover:text-primary'}`}
+              className={`px-2.5 py-1 rounded-capsule text-[11px] transition-[background-color,border-color,box-shadow,opacity,transform,color] ${i === active ? 'bg-accent/15 text-accent border border-accent/30' : 'text-muted border border-transparent hover:text-primary'}`}
             >
               {s.name}
             </button>

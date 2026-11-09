@@ -61,7 +61,7 @@ function SsoCallbackContent() {
             <p className="text-muted text-xs mb-4">{message}</p>
             <button
               onClick={() => router.push('/onboarding')}
-              className="w-full py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-all anim-press"
+              className="w-full py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-[background-color,border-color,box-shadow,opacity,transform,color] anim-press"
             >
               返回登录
             </button>

@@ -135,7 +135,7 @@ export default function AdminDashboard() {
                     {keys.map((k: any) => (
                       <div
                         key={k.index}
-                        className={`flex items-center justify-between text-xs px-3 py-2 rounded-card transition-all duration-200 ${
+                        className={`flex items-center justify-between text-xs px-3 py-2 rounded-card transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 ${
                           k.inCooldown
                             ? 'bg-error/5 border border-error/10'
                             : k.failCount > 0

@@ -211,22 +211,22 @@ function OnboardingContent() {
                 <label className="block text-sm text-muted mb-1.5">{t('onb.username')}</label>
                 <input type="text" value={username} onChange={(e) => setUsername(e.target.value)}
                   placeholder={t('onb.usernamePh')} autoComplete="username"
-                  className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-all" />
+                  className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-[background-color,border-color,opacity,transform]" />
               </div>
               <div>
                 <label className="block text-sm text-muted mb-1.5">{t('onb.email')}</label>
                 <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setAuthError(''); }}
                   placeholder="you@domain.com" required autoComplete="email"
-                  className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-all" />
+                  className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-[background-color,border-color,opacity,transform]" />
               </div>
               <div>
                 <label className="block text-sm text-muted mb-1.5">{t('onb.password')}</label>
                 <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setAuthError(''); }}
                   placeholder={t('onb.passwordPh')} required autoComplete="current-password"
-                  className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-all" />
+                  className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-[background-color,border-color,opacity,transform]" />
               </div>
               <button onClick={handleEnter} disabled={isLoading || !!validationError}
-                className="w-full py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-all disabled:opacity-50 anim-press">
+                className="w-full py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-[background-color,border-color,opacity,transform] disabled:opacity-50 anim-press">
                 {isLoading ? t('onb.wait') : t('common.continue')}
               </button>
               <button type="button" onClick={() => router.push('/forgot-password')}
@@ -247,13 +247,13 @@ function OnboardingContent() {
                   <div className="grid grid-cols-2 gap-2">
                     {sso.google && (
                       <button onClick={() => startOauth('google')} disabled={!!ssoBusy}
-                        className="w-full py-2.5 bg-bg border border-border text-sm text-primary hover:border-accent/50 rounded-capsule transition-all disabled:opacity-50 anim-press">
+                        className="w-full py-2.5 bg-bg border border-border text-sm text-primary hover:border-accent/50 rounded-capsule transition-[background-color,border-color,opacity,transform] disabled:opacity-50 anim-press">
                         {ssoBusy === 'google' ? t('onb.redirecting') : 'Google'}
                       </button>
                     )}
                     {sso.github && (
                       <button onClick={() => startOauth('github')} disabled={!!ssoBusy}
-                        className="w-full py-2.5 bg-bg border border-border text-sm text-primary hover:border-accent/50 rounded-capsule transition-all disabled:opacity-50 anim-press">
+                        className="w-full py-2.5 bg-bg border border-border text-sm text-primary hover:border-accent/50 rounded-capsule transition-[background-color,border-color,opacity,transform] disabled:opacity-50 anim-press">
                         {ssoBusy === 'github' ? t('onb.redirecting') : 'GitHub'}
                       </button>
                     )}
@@ -262,16 +262,16 @@ function OnboardingContent() {
               )}
 
               <div className="text-xs text-muted space-y-2">
-                <button onClick={() => setShowPat((v) => !v)} className="text-muted hover:text-primary transition-all">
+                <button onClick={() => setShowPat((v) => !v)} className="text-muted hover:text-primary transition-[background-color,border-color,opacity,transform]">
                   {showPat ? t('onb.patHide') : t('onb.patToggle')}
                 </button>
                 {showPat && (
                   <div className="space-y-2">
                     <input type="password" value={pat} onChange={(e) => setPat(e.target.value)}
                       placeholder="ghp_… or github_pat_…" autoComplete="off"
-                      className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-all" />
+                      className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 transition-[background-color,border-color,opacity,transform]" />
                     <button onClick={githubPatLogin} disabled={!pat.trim() || !!ssoBusy}
-                      className="w-full py-2.5 bg-bg border border-border text-sm text-primary hover:border-accent/50 rounded-capsule transition-all disabled:opacity-50 anim-press">
+                      className="w-full py-2.5 bg-bg border border-border text-sm text-primary hover:border-accent/50 rounded-capsule transition-[background-color,border-color,opacity,transform] disabled:opacity-50 anim-press">
                       {ssoBusy === 'pat' ? t('onb.wait') : t('onb.patContinue')}
                     </button>
                   </div>
@@ -290,11 +290,11 @@ function OnboardingContent() {
               <h2 className="text-xl font-display font-bold text-primary mb-1">{t('onb.chooseLanguage')}</h2>
               <p className="text-muted text-sm mb-4">{t('onb.chooseLanguageHint')}</p>
               <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('common.search')}
-                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 mb-3 transition-all" />
+                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 mb-3 transition-[background-color,border-color,opacity,transform]" />
               <div className="max-h-60 overflow-y-auto space-y-1">
                 {filteredLanguages.map((l, i) => (
                   <button key={l.code} onClick={() => setLanguage(l.code)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-all anim-fade-up ${language === l.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-[background-color,border-color,opacity,transform] anim-fade-up ${language === l.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}
                     style={{ animationDelay: `${i * 0.02}s`, opacity: 0 }}>
                     <span className="text-sm flex-1">{l.nativeName}</span>
                     <span className="text-xs text-muted">{l.englishName}</span>
@@ -303,7 +303,7 @@ function OnboardingContent() {
                 ))}
               </div>
               <button onClick={() => { if (language) { setSearch(''); setPhase('region'); } }} disabled={!language}
-                className="w-full mt-4 py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-all disabled:opacity-30 disabled:cursor-not-allowed anim-press">{t('common.continue')} →</button>
+                className="w-full mt-4 py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-[background-color,border-color,opacity,transform] disabled:opacity-30 disabled:cursor-not-allowed anim-press">{t('common.continue')} →</button>
             </div>
           </div>
         )}
@@ -315,11 +315,11 @@ function OnboardingContent() {
               <h2 className="text-xl font-display font-bold text-primary mb-1">{t('onb.chooseRegion')}</h2>
               <p className="text-muted text-sm mb-4">{t('onb.chooseRegionHint')}</p>
               <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('common.search')}
-                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 mb-3 transition-all" />
+                className="w-full bg-bg border border-border rounded-card px-4 py-2.5 text-sm text-primary placeholder-muted focus:outline-none focus:border-accent/50 mb-3 transition-[background-color,border-color,opacity,transform]" />
               <div className="max-h-60 overflow-y-auto space-y-1">
                 {filteredRegions.map((r, i) => (
                   <button key={r.code} onClick={() => setRegion(r.code)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-all anim-fade-up ${region === r.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-card text-left transition-[background-color,border-color,opacity,transform] anim-fade-up ${region === r.code ? 'bg-accent/10 border border-accent/30 text-primary' : 'text-muted hover:bg-surface-hover hover:text-primary'}`}
                     style={{ animationDelay: `${i * 0.02}s`, opacity: 0 }}>
                     <span className="text-lg">{r.flag}</span>
                     <span className="text-sm flex-1">{r.name}</span>
@@ -329,7 +329,7 @@ function OnboardingContent() {
                 ))}
               </div>
               <button onClick={handleFinish} disabled={!region}
-                className="w-full mt-4 py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-all disabled:opacity-30 disabled:cursor-not-allowed anim-press">{t('common.continue')} →</button>
+                className="w-full mt-4 py-2.5 bg-accent hover:bg-accent-hover text-on-accent font-medium rounded-capsule transition-[background-color,border-color,opacity,transform] disabled:opacity-30 disabled:cursor-not-allowed anim-press">{t('common.continue')} →</button>
             </div>
           </div>
         )}

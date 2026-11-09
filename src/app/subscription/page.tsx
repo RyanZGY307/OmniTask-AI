@@ -92,13 +92,13 @@ export default function SubscriptionPage() {
           <div className="flex gap-2">
             {tier === 'STANDARD' && (
               <button onClick={() => router.push('/pricing')}
-                className="flex-1 py-2.5 bg-accent text-on-accent text-sm rounded-card hover:bg-accent/80 transition-all">
+                className="flex-1 py-2.5 bg-accent text-on-accent text-sm rounded-card hover:bg-accent/80 transition-[background-color,border-color,box-shadow,opacity,transform,color]">
                 升级订阅
               </button>
             )}
             {tier !== 'STANDARD' && (
               <button onClick={() => router.push('/pricing')}
-                className="flex-1 py-2.5 liquid-glass liquid-glass-interactive text-sm text-muted hover:text-primary rounded-card transition-all">
+                className="flex-1 py-2.5 liquid-glass liquid-glass-interactive text-sm text-muted hover:text-primary rounded-card transition-[background-color,border-color,box-shadow,opacity,transform,color]">
                 购买积分
               </button>
             )}
