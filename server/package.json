@@ -10,7 +10,7 @@
     "postinstall": "npm run prisma:generate"
   },
   "dependencies": {
-    "@libsql/client": "^0.5.29",
+    "@libsql/client": "^0.5.6",
     "@prisma/client": "^6.19.3",
     "@types/pdfkit": "^0.17.6",
     "better-sqlite3": "^11.7.0",
