@@ -66,8 +66,16 @@ router.delete('/provider-connections/:provider', adminAuth, async (req: AuthRequ
   try {
     const provider = String(req.params.provider);
     const tier = (req.query.tier === 'PRO' ? 'PRO' : 'FREE') as 'FREE' | 'PRO';
+    // 活动占用检查（含普通 API 与 RSI 前缀），有则 409 拒绝，不做硬删。
+    const { countActiveLeases } = await import('../services/concurrencyLease');
+    // api/carrier 租约 key 形如 conc:<provider>:<tier>:api:<key> / ...:carrier
+    const all = await countActiveLeases(`${provider}:${tier}`);
+    if (all > 0) {
+      return res.status(409).json({ error: `该供应商仍有 ${all} 个活动并发占用，不能删除` });
+    }
     await deleteProviderConnection(provider, tier);
     await rebuildApiKeyPools();
+    // QuotaSwitchLog / QuotaLedger / QuotaReservation 为审计用途，不随配置删除清理。
     res.json({ success: true });
   } catch (err: any) { res.status(500).json({ error: err?.message || '删除失败' }); }
 });
@@ -608,7 +616,18 @@ router.post('/models', adminAuth, async (req: AuthRequest, res: Response) => {
 router.delete('/models/:modelKey', adminAuth, async (req: AuthRequest, res: Response) => {
   try {
     const key = String(req.params.modelKey);
+    // 仍有活动 Lease（ConcurrencyLease 未释放）时拒绝删除：避免旧记录失去关联。
+    const { countActiveLeases } = await import('../services/concurrencyLease');
+    // 模型级租约 key 形如 conc:<provider>:<tier>:model:<modelKey>，用后缀模糊匹配
+    const mine = await countActiveLeases();
+    const mineRows = await import('../services/concurrencyLease').then((m) => m.activeLeaseCount());
+    const mineCount = Object.keys(mineRows).filter((k) => k.endsWith(`:model:${key}`)).length;
+    if (mine > 0 && mineCount > 0) {
+      return res.status(409).json({ error: `该模型仍有 ${mineCount} 个活动并发占用，请等待请求结束或租约过期` });
+    }
     await prisma.modelConfig.delete({ where: { modelKey: key } }).catch(() => null);
+    // 额度历史（QuotaLedger / QuotaReservation / QuotaSwitchLog）一律不随删除清理：
+    // 它们按 scopeKey 文本留存，旧记录保持可追溯，不会因删模型而失去关联。
     const { refreshModelConfigs } = await import('../services/configSync');
     await refreshModelConfigs();
     const { dropModelScope } = await import('../services/rateLimiter');

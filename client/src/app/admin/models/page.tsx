@@ -11,15 +11,11 @@
 
 import { useEffect, useState } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
+import { RateLimitEditor, Field } from '../../components/RateLimitEditor';
+import type { RateLimitBlock } from '../../components/RateLimitEditor';
 
 type Tier = 'FREE' | 'PRO';
 
-interface RateLimitBlock {
-  rpm?: number | ''; tpm?: number | ''; rpd?: number | '';
-  maxParallel?: number | ''; tpd?: number | '';
-  tpdBehavior: 'block' | 'limitRpm';
-  tpdLimitRpm?: number | '';
-}
 interface Conn {
   provider: string; tier: Tier; label: string; baseUrl: string;
   apiKeys: string[]; apiLimit: Partial<RateLimitBlock>; carrierLimit: Partial<RateLimitBlock>;
@@ -194,7 +190,7 @@ export default function AdminModelsPage() {
         <div className="flex gap-1 rounded-capsule bg-surface/60 p-0.5">
           {(['FREE', 'PRO'] as Tier[]).map((t) => (
             <button key={t} onClick={() => setTier(t)}
-              className={`px-3 py-1 text-xs rounded-capsule transition-all ${tier === t ? 'bg-accent text-on-accent' : 'text-muted'}`}>
+              className={`px-3 py-1 text-xs rounded-capsule transition-[background-color,border-color,box-shadow,opacity,transform,color] ${tier === t ? 'bg-accent text-on-accent' : 'text-muted'}`}>
               {t === 'FREE' ? '免费用户' : 'Pro用户'}
             </button>
           ))}
@@ -402,49 +398,17 @@ function safeObj(v: any): Partial<RateLimitBlock> {
 }
 function hasLimit(b: any): boolean {
   if (!b) return false;
-  return ['rpm', 'tpm', 'rpd', 'maxParallel', 'tpd'].some((k) => (b as any)?.[k]);
+  // 空串/'-' 都视为"无限制"，不算已配置（与后端 parseRateLimitBlock 口径一致）
+  const eff = (v: any) => typeof v === 'string' && (v.trim() === '' || v.trim() === '-') ? null : v;
+  return ['rpm', 'tpm', 'rpd', 'maxParallel', 'tpd'].some((k) => {
+    const v = eff((b as any)?.[k]);
+    return v !== null && v !== undefined;
+  });
 }
 function autoVendor(provider: string): string {
   const map: Record<string, string> = { openai: 'ChatGPT', anthropic: 'Claude', google: 'Gemini', deepseek: 'DeepSeek', xiaomi: 'Xiaomi MiMO', agnes: 'Agnes' };
   return map[provider] || provider;
 }
 
-// ---------------- 速率限制编辑器（RPM/TPM/RPD/最大并行/TPD + TPD 行为） ----------------
-function RateLimitEditor({ value, onChange, showModelHint }: {
-  value: RateLimitBlock; onChange: (v: RateLimitBlock) => void; showModelHint?: boolean;
-}) {
-  const set = (patch: Partial<RateLimitBlock>) => onChange({ ...value, ...patch });
-  const num = (k: 'rpm' | 'tpm' | 'rpd' | 'maxParallel' | 'tpd' | 'tpdLimitRpm') =>
-    <input type="number" min="0" placeholder="无限" value={(value[k] as any) ?? ''}
-      onChange={(e) => set({ [k]: e.target.value === '' ? '' : Number(e.target.value) })}
-      className="w-full bg-bg border border-border rounded-card px-2 py-1.5 text-xs font-mono text-primary placeholder-muted focus:outline-none focus:border-accent/50" />;
-  const isBlock = value.tpdBehavior === 'block';
-  return (
-    <div className="space-y-2 border border-border/60 rounded-card p-2.5">
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="RPM">{num('rpm')}</Field>
-        <Field label="TPM">{num('tpm')}</Field>
-        <Field label="RPD">{num('rpd')}</Field>
-        <Field label="最大并行">{num('maxParallel')}</Field>
-        <Field label="TPD">{num('tpd')}</Field>
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="text-[11px] text-muted">TPD 到达后</div>
-        <div className="flex gap-1">
-          <button onClick={() => set({ tpdBehavior: 'block' })} className={`px-2 py-0.5 text-[11px] rounded-capsule border ${isBlock ? 'border-accent text-accent' : 'border-border text-muted'}`}>不可使用</button>
-          <button onClick={() => set({ tpdBehavior: 'limitRpm' })} className={`px-2 py-0.5 text-[11px] rounded-capsule border ${!isBlock ? 'border-accent text-accent' : 'border-border text-muted'}`}>限制RPM</button>
-        </div>
-        {!isBlock && <div className="flex items-center gap-1 text-[11px] text-muted">RPM：{num('tpdLimitRpm')}</div>}
-      </div>
-      {showModelHint && <div className="text-[10px] text-muted/60">（针对上方所选模型；留空/无限则不限制）</div>}
-    </div>
-  );
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="text-[10px] text-muted/70 mb-0.5">{label}</div>
-      {children}
-    </div>
-  );
-}
+
+

@@ -178,9 +178,15 @@ S('8. 剩余的 .length/N 只允许是「预算估算」且必须正名');
     'src/routes/admin.ts:313': 'conversation 体积字节粗估，用于存储配额展示，与 token 无关',
     'src/routes/chat.ts:501': 'system prompt 体积粗估（system_tokens_estimated），仅 prompt 可观测，不扣费',
     'src/services/audio/runtime.ts:368': 'PCM 音频缓冲区按字节扩容，与 token 无关',
+    'src/services/rsi/signalBridge.ts:138': '成本异常检测的中位数样本序号（upperMedianCount），取排序后 50% 位置样本，与 token 计量无关',
+    'src/services/rsi/scheduler.ts:138': '候选组最小样本量按份额换算（CANDIDATES_SHARE），与 token 计量无关',
+    'src/services/rsi/metrics.ts:224': '字符量兜底估算（char-based-fallback），仅在 durationMs 缺失时出现，已自证 estimated 且不参与计费
     'src/services/compiler.ts:141': '生成前 prompt 预算估算（内核/技能/历史体积），决定是否裁剪',
     'src/services/context/compress.ts:23': '记忆压缩前的体积估算，决定是否触发压缩',
     'src/services/expressionLearning.ts:701': '表达学习密度 = 每百字符命中数的**分母**，是比例不是 token',
+    'src/services/rsi/signalBridge.ts:127': '成本样本数组按序号取第 50% 位置（upperMedianCount），是统计中位数不是 token 估算',
+    'src/services/rsi/scheduler.ts:138': '候选组最少样本占比（CANDIDATES_SHARE 常量），是实验样本量不是 token 估算',
+    'src/agent/model/agentModelClient.ts:224': 'provider 用量不可用时的字符粗估兜底，已显式标 estimated/estimate/char-based-fallback，不用于计费',
   };
   const EST_MARK = /est|estimate|budget|bytes|_measured|approx/i;
   const unnamed: string[] = [];

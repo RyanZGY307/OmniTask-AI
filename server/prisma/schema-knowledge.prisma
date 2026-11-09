@@ -806,3 +806,123 @@ model OrganizationRecord {
   @@index([jobId])
   @@index([objectId])
 }
+
+// ================================================================
+// 受控 RSI（Controlled RSI）资产层 — 第四阶段设计落地
+// 追加式版本 + 变更申请 + 分级暂停；审计复用 EvolutionAudit，
+// 评估复用 EvaluationReport，均不新建重复表。
+// ================================================================
+
+model ManagedAsset {
+  id             String   @id @default(cuid())
+  assetType      String   // prompt_atom / prompt_extension / scenario / knowledge_fact / knowledge_object / memory_entry / skill / user_skill / model_profile / action_policy
+  assetKey       String   // 全局业务键，如 prompt_atom:<atomId>
+  ownerId        String?  // 用户资产填 userId；全局资产为 null
+  scope          String   @default("global") // user / team / global
+  region         String?
+  currentVersion Int      @default(0)
+  status         String   @default("active") // active / paused / quarantined / retired
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([assetType, assetKey])
+  @@index([status])
+  @@index([ownerId])
+}
+
+model AssetVersion {
+  id         String   @id @default(cuid())
+  assetKey   String
+  version    Int
+  contentRef String   // 内容定位：库表记录 id，或外部引用标识
+  contentHash String  // sha256 前 16 位，用于幂等与差异比对
+  content    String?  // 小内容直接内联；>8KB 只留 hash 与 ref
+  status     String   @default("quarantined") // quarantined / released / superseded / rolled_back
+  createdBy  String
+  actorKind  String   // user / agent / worker / service / plugin / admin
+  createdAt  DateTime @default(now())
+
+  @@unique([assetKey, version])
+  @@index([assetKey, status])
+}
+
+model ChangeRequest {
+  id             String   @id @default(cuid())
+  assetId        String
+  assetKey       String
+  fromVersion    Int
+  toVersion      Int
+  proposal       String   // JSON：变更内容（大内容放 AssetVersion.contentRef）
+  hypothesis     String
+  evidenceRefs   String?  // JSON 数组
+  riskLevel      String   @default("r1") // r0 / r1 / r2 / r3
+  gateLevel      Int      @default(1)
+  proposedBy     String
+  proposerKind   String
+  status         String   @default("pending") // pending / awaiting_approval / approved / rejected / evaluating / canary / released / failed / rolled_back
+  baselineId     String?
+  rolloutId      String?
+  canaryPercent  Int      @default(0)
+  evaluationJson String?  // 隔离验证与指标结果（JSON）
+  decidedBy      String?
+  decidedAt      DateTime?
+  rejectReason   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([assetKey, status])
+  @@index([riskLevel, status])
+}
+
+model SystemPause {
+  id         String    @id @default(cuid())
+  scope      String    // global / asset_type / asset_key / worker_kind
+  resource   String    // 具体资源标识；scope=global 时为 "*"
+  level      String    // read / write / all
+  pausedBy   String
+  reason     String
+  expiresAt  DateTime?
+  resumedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([scope, resource])
+  @@index([expiresAt])
+}
+
+// RSI 独立 API 配置：与普通 ProviderConnection 完全隔离（无外键、无关联查询），
+// 普通 API 管理的增删改不会影响 RSI 额度，反之亦然。
+model RsiProviderConfig {
+  id            String   @id @default(cuid())
+  provider      String
+  tier          String   @default("FREE") // FREE | PRO
+  label         String   @default("")
+  baseUrl       String
+  baseUrlRoot   String?
+  apiKeys       String   @default("[]") // JSON 数组（同上）
+  apiLimit      String   @default("") // JSON ParsedRateLimitBlock — 单 API
+  carrierLimit  String   @default("") // JSON — RSI 侧运营商聚合
+  rsiModelLimit String   @default("") // JSON — RSI 侧模型级（可多个模型各自的块）
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([provider, tier])
+  @@index([enabled])
+}
+
+// RSI 侧额度切换审计（普通额度切换写在 user 库 QuotaSwitchLog，两侧不混）
+model RsiQuotaSwitchLog {
+  id         String   @id @default(cuid())
+  level      String // api / carrier / model
+  quotaType  String // rpm / tpm / rpd / tpd / maxParallel
+  fromApi    String
+  toApi      String
+  fromModel  String
+  toModel    String
+  reason     String
+  remaining  String // JSON 快照
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}

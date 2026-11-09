@@ -101,7 +101,7 @@ function Bar({ rows }: { rows: { label: string; value: number; note?: string }[]
             <span className="font-mono text-primary shrink-0">{fmtBytes(r.value)}</span>
           </div>
           <div className="h-2 bg-border/60 rounded-full overflow-hidden">
-            <div className="h-full bg-accent rounded-full transition-all" style={{ width: `${Math.max(1, (r.value / max) * 100)}%` }} />
+            <div className="h-full bg-accent rounded-full transition-[background-color,border-color,box-shadow,opacity,transform,color]" style={{ width: `${Math.max(1, (r.value / max) * 100)}%` }} />
           </div>
           {r.note && <div className="text-[10px] text-muted mt-0.5">{r.note}</div>}
         </li>

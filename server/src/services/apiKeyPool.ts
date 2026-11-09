@@ -14,7 +14,8 @@
 import { log } from './logger';
 import { getProviderConnections, getProviderBaseUrl, type ProviderTier } from './providerConfig';
 import { PROVIDER_BASE_URLS } from '../config';
-import { acquireRateGate, type GateResult } from './rateGate';
+import { acquireRateGate, preflightCandidateNoQuota, type GateResult } from './rateGate';
+import { recordQuotaSwitch } from './quotaAudit';
 
 interface KeySlot {
   key: string;
@@ -167,6 +168,9 @@ export function acquireFreeSlot(modelKey: string, estTokens = 0): SlotSelection 
   freeCursor++;
 
   let lastGate: GateResult | null = null;
+  // 切换审计：记住本轮首个尝试的供应商；成功落到别家时补一条真实 from→to 切换记录
+  const firstProvider = orderedConns[0]?.provider ?? '';
+  let blockedFrom = '';
   for (const conn of orderedConns) {
     const pk = poolKey(conn.provider, 'FREE');
     const pool = pools.get(pk) || conn.apiKeys.map((k, i) => slotFor(conn.provider, 'FREE', i + 1, k));
@@ -186,9 +190,33 @@ export function acquireFreeSlot(modelKey: string, estTokens = 0): SlotSelection 
       lastGate = gate;
       if (gate.ok) {
         slot.totalCalls++;
+        // 切换前重检备用配置（enabled/status/capabilities）；不过则不切换，直接放弃本轮
+        if (conn.provider !== firstProvider) {
+          const pf = preflightCandidateNoQuota({ provider: conn.provider, tier: 'FREE', apiKey: slot.key, modelKey });
+          if (!pf.ok) {
+            log('INFO', 'ApiKeyPool', `FREE: 备用 ${conn.provider} 预检不过（${pf.reason}），不切换`);
+            return null;
+          }
+          void recordQuotaSwitch({
+            level: 'api',
+            quotaType: lastGate?.reason || 'blocked',
+            fromApi: blockedFrom || firstProvider,
+            toApi: conn.provider,
+            fromModel: modelKey,
+            toModel: modelKey,
+            reason: `quota_blocked:${lastGate?.reason || 'blocked'}`,
+            remaining: { effectiveRpm: gate.effectiveRpm ?? null },
+          });
+        }
         return { provider: conn.provider, tier: 'FREE', key: slot.key, release: gate.release, effectiveRpm: gate.effectiveRpm };
       }
-      // 未通过：不释放（acquireAll 已回滚），尝试下一个 key
+      // 非额度类拒绝（并发满/超时/5xx/401/403/参数错/能力不符）：不换 API，直接放弃本次轮询。
+      if (gate.quotaSwitchable === false) {
+        log('INFO', 'ApiKeyPool', `FREE: non-quota rejection (${gate.reason}) — not switching; model=${modelKey}`);
+        return null;
+      }
+      // 额度类拒绝：记住这家，继续试下一把；真正落到别家时统一记切换（见成功分支）。
+      if (!blockedFrom) blockedFrom = conn.provider;
     }
   }
 
@@ -211,6 +239,21 @@ export function acquireProSlot(provider: string, modelKey: string, estTokens = 0
       slot.totalCalls++;
       return { provider, tier: 'PRO', key: slot.key, release: gate.release, effectiveRpm: gate.effectiveRpm };
     }
+    // Pro 是用户显式选定的供应商：并发满/超时/5xx/401/403/参数错 一律不切到别的供应商。
+    if (gate.quotaSwitchable === false) {
+      log('INFO', 'ApiKeyPool', `PRO ${provider}: non-quota rejection (${gate.reason}) — not switching; model=${modelKey}`);
+      return null;
+    }
+    // 额度类：同供应商内换下一把 key，记一条 api 级切换（from=to=该供应商）
+    void recordQuotaSwitch({
+      level: 'api',
+      quotaType: gate.reason || 'unknown',
+      fromApi: provider,
+      toApi: provider,
+      fromModel: modelKey,
+      toModel: modelKey,
+      reason: `quota_blocked:${gate.reason || 'unknown'}`,
+    });
   }
   log('WARN', 'ApiKeyPool', `PRO ${provider}: all keys blocked for model=${modelKey}`);
   return null;

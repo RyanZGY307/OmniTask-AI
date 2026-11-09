@@ -2430,3 +2430,107 @@ model SummaryPurgeLog {
 
   @@index([startedAt])
 }
+
+// 受控 RSI 任务队列（与 researchJob/evolutionJob 同库同模式：
+// lease + heartbeat + compare-and-set claim + 重启回收）
+model RsiJob {
+  id           String    @id @default(cuid())
+  kind         String    @default("rsi_run") // signal_scan / rsi_run / rollout_check
+  payload      String?   // JSON
+  priority     Int       @default(5)
+  status       String    @default("QUEUED") // QUEUED / RUNNING / COMPLETED / FAILED / CANCELLED
+  attemptCount Int       @default(0)
+  workerId     String?
+  lastError    String?
+  resultJson   String?
+  heartbeatAt  DateTime?
+  leaseUntil   DateTime?
+  queuedAt     DateTime  @default(now())
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status, queuedAt])
+  @@index([status, priority])
+  @@index([workerId, heartbeatAt])
+  @@index([leaseUntil])
+}
+
+// 并发许可 Lease（第三级额度体系）：PG 原子事务 + 会话级顾问锁串行化占用，
+// 跨多实例生效；进程崩溃未释放由 expiresAt 过期兜底回收。
+model ConcurrencyLease {
+  id         String    @id @default(cuid())
+  leaseKey   String    @unique // <prefix>conc:provider:tier:scope:key
+  holderId   String // <pid>-<base36 ts>，进程唯一
+  tier       String    @default("FREE")
+  scope      String    @default("api") // api / carrier / model
+  acquiredAt DateTime  @default(now())
+  expiresAt  DateTime
+  releasedAt DateTime?
+
+  @@index([expiresAt])
+  @@index([leaseKey, releasedAt])
+}
+
+// 普通 API 额度自动切换记录：只记"由数据额度限制触发"的切换（用户 m02000 补充任务）
+model QuotaSwitchLog {
+  id         String   @id @default(cuid())
+  level      String // api / carrier / model
+  quotaType  String // rpm / tpm / rpd / tpd / maxParallel
+  fromApi    String
+  toApi      String
+  fromModel  String
+  toModel    String
+  reason     String // trigger detail，如 tpd_reached / rpm_exhausted
+  remaining  String // JSON 切换时各作用域剩余额度快照
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([level, quotaType])
+}
+
+// ================================================================
+// 跨实例三级额度账本（PostgreSQL；替代进程内滑动窗口）
+//   QuotaLedger      窗口计数器（分钟/日 × req/token），行级原子抢占
+//   QuotaReservation Token 预留与结算状态机（reserved/committed/released/expired/uncertain）
+// 两表共同保证「多实例同时抢最后一个名额不突破上限」。
+// ================================================================
+
+model QuotaLedger {
+  id            String   @id @default(cuid())
+  scopeKey      String   @unique
+  level         String
+  scopeId       String
+  windowKind    String
+  windowKey     String
+  reqCount      Int      @default(0)
+  tokReserved   Int      @default(0)
+  tokCommitted  Int      @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@index([scopeId, windowKind, windowKey])
+}
+
+model QuotaReservation {
+  id              String    @id @default(cuid())
+  reservationKey  String    @unique
+  status          String    @default("reserved")
+  estTokens       Int       @default(0)
+  committedTokens Int       @default(0)
+  scopes          String    @default("[]")
+  origin          String    @default("other")
+  provider        String?
+  tier            String?
+  apiKey          String?
+  modelKey        String?
+  requestId       String?
+  note            String?
+  createdAt       DateTime  @default(now())
+  settledAt       DateTime?
+  expiresAt       DateTime
+
+  @@index([status, expiresAt])
+  @@index([origin, createdAt])
+  @@index([requestId])
+}

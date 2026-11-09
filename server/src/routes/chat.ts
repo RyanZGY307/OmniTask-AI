@@ -20,7 +20,7 @@ import { getMemories } from '../services/memory';
 import { maybeGenerateConversationTitle } from '../services/conversationTitle';
 import { routeModel, recordRoutingResult, recordRoutingFallback, recordRoutingRateLimit, recordRoutingTimeout } from '../services/router';
 import { getApiKey } from '../services/apiKeyPool';
-import { awaitAcquireRateGate } from '../services/rateGate';
+import { awaitAcquireRateGate, queueCapMs } from '../services/rateGate';
 /**
  * 把请求体里的媒体字段整形成 extractMediaSignals 能吃的 Message 形态。
  *
@@ -615,7 +615,7 @@ async function buildAgentChat(
     if (qProvider && qKey) {
       const q = await awaitAcquireRateGate(
         { provider: qProvider, tier: qTier, apiKey: qKey, modelKey, estTokens: taskClassification.estimatedTokens ?? 1000 },
-        20_000,
+        queueCapMs(),
       );
       if (q.ok) {
         decision.release = q.release;

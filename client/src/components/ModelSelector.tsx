@@ -142,7 +142,7 @@ export default function ModelSelector({ onClose, thinkOnly = false }: Props) {
             {/* 免费版：仅两个选项 —— 自动选择（默认，系统选最快模型）＋ 其他模型 [Pro] */}
             <button
               onClick={() => { pickModel('auto'); }}
-              className={`w-full flex items-center px-3 py-2.5 rounded-card text-sm transition-all duration-200 ${currentModel === 'auto' ? 'bg-accent/10 text-accent' : 'text-primary hover:bg-surface-hover'}`}
+              className={`w-full flex items-center px-3 py-2.5 rounded-card text-sm transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 ${currentModel === 'auto' ? 'bg-accent/10 text-accent' : 'text-primary hover:bg-surface-hover'}`}
             >
               <span className="flex-1 min-w-0 text-left truncate font-medium">{tr('chat.modelAuto')}</span>
               <span className="text-[10px] text-muted/70 shrink-0 mr-2">系统选最快模型</span>
@@ -150,7 +150,7 @@ export default function ModelSelector({ onClose, thinkOnly = false }: Props) {
             </button>
             <button
               onClick={() => { showToast(tr('chat.upgradeUnlock')); }}
-              className="w-full flex items-center px-3 py-2.5 rounded-card text-sm text-primary hover:bg-surface-hover transition-all duration-200"
+              className="w-full flex items-center px-3 py-2.5 rounded-card text-sm text-primary hover:bg-surface-hover transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200"
             >
               <span className="flex-1 min-w-0 text-left truncate font-medium">{tr('chat.otherModels')}</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded-capsule bg-accent/15 text-accent font-semibold shrink-0 mr-2">Pro</span>
@@ -214,7 +214,7 @@ function GroupBlock({
               <button
                 key={key}
                 onClick={(e) => { e.stopPropagation(); onPickModel(key); }}
-                className={`w-full flex items-center px-3 py-2 rounded-card text-xs transition-all duration-200 ${
+                className={`w-full flex items-center px-3 py-2 rounded-card text-xs transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 ${
                   isCurrent ? 'bg-accent/10 text-accent' : 'text-muted hover:text-primary hover:bg-surface-hover'
                 }`}
               >
@@ -246,7 +246,7 @@ function ThinkLevelRow({
             <button
               key={t.key}
               onClick={(e) => { e.stopPropagation(); onPick(t.key as ThinkLevel); }}
-              className={`w-full flex items-center px-3 py-2 rounded-card text-xs transition-all duration-200 ${
+              className={`w-full flex items-center px-3 py-2 rounded-card text-xs transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 ${
                 current === t.key ? 'bg-accent/10 text-accent' : 'text-muted hover:text-primary hover:bg-surface-hover'
               }`}
             >
@@ -267,7 +267,7 @@ function RowShell({ label, value, pill, active, onClick, children }: {
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-2 py-2 rounded-card transition-all duration-200 ${active ? 'bg-surface-hover/70' : 'hover:bg-surface-hover/60'}`}
+      className={`w-full text-left px-2 py-2 rounded-card transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 ${active ? 'bg-surface-hover/70' : 'hover:bg-surface-hover/60'}`}
     >
       <div className="flex items-center">
         <span className="flex-1 min-w-0 text-xs font-medium text-primary truncate">{label}</span>

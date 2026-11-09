@@ -64,7 +64,7 @@ export default function CurrencySelector({ currentCurrency, onSelect, showInline
               <div className="text-xs text-muted px-2 py-1 sticky top-0 bg-bg">{region}</div>
               {items.map(c => (
                 <button key={c.code} onClick={() => handleSelect(c.code)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-card text-left transition-all ${currentCurrency === c.code ? 'bg-accent/10 border border-accent/30' : 'hover:bg-surface-hover'}`}>
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-card text-left transition-[background-color,border-color,box-shadow,opacity,transform,color] ${currentCurrency === c.code ? 'bg-accent/10 border border-accent/30' : 'hover:bg-surface-hover'}`}>
                   <span className="text-sm font-mono font-bold text-accent w-10">{c.code}</span>
                   <span className="text-sm text-primary flex-1">{c.name}</span>
                   <span className="text-xs text-muted">{c.symbol}</span>

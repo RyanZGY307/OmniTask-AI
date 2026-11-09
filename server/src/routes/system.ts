@@ -31,14 +31,16 @@ function urlErr(c: UrlCheck): string | null {
 const router = Router();
 
 // 未配置时：setup 状态可匿名查询（否则前端无法判断该显示登录页还是配置页）。
+// 安全边界：匿名响应绝不包含任何连接信息——域名列表本身即可用于侦察
+// （攻击者据此知道系统有几个库、库叫什么），故仅在未配置时暴露必要字段；
+// 已配置时只返回一个布尔值。
 router.get('/status', async (_req: AuthRequest, res: Response) => {
   const required = isSetupRequired();
-  res.json({
-    setupRequired: required,
-    configured: !required,
-    dbDomains: DB_DOMAINS,
-    connections: required ? [] : maskedDbConnections(),
-  });
+  const body: Record<string, unknown> = { setupRequired: required, configured: !required };
+  if (required) {
+    body.dbDomains = DB_DOMAINS;
+  }
+  res.json(body);
 });
 
 // 已配置后，任何 setup 写入都拒绝：防止把"改配置"变成绕过审计的无门槛入口。

@@ -6,8 +6,10 @@ const fs = require('fs');
 
 const TARGETS = [
   { name: 'user',         url: process.env.DATABASE_URL_USER,         sql: 'prisma/migrations-user.sql' },
+  { name: 'user-rsi',     url: process.env.DATABASE_URL_USER,         sql: 'prisma/migrations/20261107_rsi-job-queue.up.sql' },
   { name: 'conversation', url: process.env.DATABASE_URL_CONVERSATION, sql: 'prisma/migrations-conversation.sql' },
   { name: 'knowledge',    url: process.env.DATABASE_URL_KNOWLEDGE,    sql: 'prisma/migrations-knowledge.sql' },
+  { name: 'knowledge-rsi', url: process.env.DATABASE_URL_KNOWLEDGE,   sql: 'prisma/migrations/20261107_rsi-controlled-lifecycle.up.sql' },
   { name: 'overflow',     url: process.env.DATABASE_URL_OVERFLOW,     sql: 'prisma/migrations-overflow.sql' },
   { name: 'agent',        url: process.env.DATABASE_URL_AGENT,        sql: 'prisma/migrations-agent.sql' },
 ];
@@ -67,9 +69,16 @@ async function applyOne(target) {
 }
 
 (async () => {
+  const failedTargets = [];
+  const failed = [];
   for (const t of TARGETS) {
     try { await applyOne(t); }
-    catch (e) { console.error(`[${t.name}] FAILED: ${e.message}`); }
+    catch (e) { console.error(`[${t.name}] FAILED: ${e.message}`); failed.push(t.name); failedTargets.push(t.name); }
   }
-  process.exit(0);
+  // 不再无条件 exit(0)：迁移失败必须以非零码结束，避免部署误判成功
+  if (failed.length > 0) {
+    console.error(`[MIGRATIONS] FAILED targets: ${failed.join(', ')}`);
+    process.exit(1);
+  }
+  process.exit(failedTargets.length ? 1 : 0);
 })();

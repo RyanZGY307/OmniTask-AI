@@ -299,7 +299,7 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
                       <span className="text-xs text-muted">{researchProgress.percent}%</span>
                     </div>
                     <div className="w-full h-1.5 bg-surface rounded-full mb-2">
-                      <div className="h-full bg-accent rounded-full transition-all duration-700"
+                      <div className="h-full bg-accent rounded-full transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-700"
                         style={{ width: `${researchProgress.percent}%`, transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }} />
                     </div>
                     <div className="text-xs text-muted">{researchProgress.message}</div>
@@ -351,7 +351,7 @@ export default function ChatWindow({ conversationId, onNewConversation }: Props)
                   </div>
                 )}
                 {currentMessages.map((msg, i) => (
-                  <div key={msg.id} id={`msg-${msg.id}`}>
+                  <div key={msg.id} id={`msg-${msg.id}`} className="anim-msg-in">
                     {msg.messageType === 'compressed_history' && (
                       <div className="my-3 flex items-center gap-3 anim-fade-up" role="separator">
                         <span className="h-px flex-1 bg-foreground/10" aria-hidden="true" />
@@ -604,7 +604,7 @@ function CapsuleBar({
       {/* 汉堡：滑出侧边栏 */}
       <button
         onClick={onOpenSidebar}
-        className="w-11 h-11 flex items-center justify-center rounded-full bg-surface border border-border/60 shadow-md text-primary hover:border-accent/40 transition-all anim-press"
+        className="w-11 h-11 flex items-center justify-center rounded-full bg-surface border border-border/60 shadow-md text-primary hover:border-accent/40 transition-[background-color,border-color,box-shadow,opacity,transform,color] anim-press"
         title={tr('side.close')}
         aria-label={tr('side.close')}
       >
@@ -616,7 +616,7 @@ function CapsuleBar({
       {/* 胶囊：Pro = 模型 + 思考等级；免费版只显示思考等级（模型由后端自动选最快） */}
       <button
         onClick={onOpenModelSelector}
-        className="flex items-center gap-1.5 px-3.5 min-h-[44px] rounded-capsule bg-surface border border-border/60 shadow-md text-xs font-medium text-primary hover:border-accent/40 transition-all max-w-[46vw] focus-ring"
+        className="flex items-center gap-1.5 px-3.5 min-h-[44px] rounded-capsule bg-surface border border-border/60 shadow-md text-xs font-medium text-primary hover:border-accent/40 transition-[background-color,border-color,box-shadow,opacity,transform,color] max-w-[46vw] focus-ring"
         title={isPro ? tr('chat.modelSelect') : tr('chat.thinkLevel')}
       >
         <span className="truncate">
@@ -637,7 +637,7 @@ function CapsuleBar({
           <button
             ref={menuBtnRef}
             onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}
-            className={`w-11 h-11 flex items-center justify-center rounded-full bg-surface border border-border/60 shadow-md text-primary hover:border-accent/40 transition-all anim-press focus-ring ${menuOpen ? 'border-accent/40' : ''}`}
+            className={`w-11 h-11 flex items-center justify-center rounded-full bg-surface border border-border/60 shadow-md text-primary hover:border-accent/40 transition-[background-color,border-color,box-shadow,opacity,transform,color] anim-press focus-ring ${menuOpen ? 'border-accent/40' : ''}`}
             title={tr('chat.menu')}
             aria-label={tr('chat.menu')}
             aria-haspopup="menu"

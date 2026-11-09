@@ -48,16 +48,16 @@ export default function MessageInput({ onSend, isLoading, disabled, initialConte
         </button>
         <textarea ref={textareaRef} value={content} onChange={(e) => setContent(e.target.value)} onKeyDown={handleKeyDown} onInput={handleInput}
           placeholder={isTouchDevice ? t('chat.inputPh') : t('chat.inputPhShift')} disabled={disabled} rows={1}
-          className="flex-1 bg-bg border border-border rounded-card px-4 py-3 text-sm text-primary placeholder-muted resize-none focus:outline-none focus:border-accent/50 transition-all disabled:opacity-50" style={{ maxHeight: '160px' }} />
+          className="flex-1 bg-bg border border-border rounded-card px-4 py-3 text-sm text-primary placeholder-muted resize-none focus:outline-none focus:border-accent/50 transition-[background-color,border-color,box-shadow,opacity,transform,color] disabled:opacity-50" style={{ maxHeight: '160px' }} />
         <button
           onClick={() => { if (isLoading && onStop) onStop(); else handleSend(); }}
           disabled={isLoading ? !onStop : (!content.trim() || disabled)}
           aria-label={isLoading ? t('chat.stopGen') : t('chat.send')}
           title={isLoading ? t('chat.stopGen') : t('chat.send')}
-          className={`p-3 rounded-card transition-all disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0 anim-hover-scale relative focus-ring ${isLoading ? 'bg-error text-white' : 'bg-accent hover:bg-accent-hover text-on-accent'}`}>
+          className={`p-3 rounded-card transition-[background-color,border-color,box-shadow,opacity,transform,color] disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0 anim-hover-scale relative focus-ring ${isLoading ? 'bg-error text-white' : 'bg-accent hover:bg-accent-hover text-on-accent'}`}>
           <span className="relative block w-5 h-5">
-            <svg className={`absolute inset-0 w-5 h-5 transition-all duration-300 ${isLoading ? 'opacity-0 scale-50' : 'opacity-100 scale-100'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-            <svg className={`absolute inset-0 w-5 h-5 transition-all duration-300 ${isLoading ? 'opacity-100 scale-100' : 'opacity-0 scale-50'}`} fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+            <svg className={`absolute inset-0 w-5 h-5 transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 ${isLoading ? 'opacity-0 scale-50' : 'opacity-100 scale-100'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+            <svg className={`absolute inset-0 w-5 h-5 transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 ${isLoading ? 'opacity-100 scale-100' : 'opacity-0 scale-50'}`} fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
           </span>
         </button>
       </div>

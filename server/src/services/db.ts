@@ -22,7 +22,8 @@ import { PrismaClient as UserPrismaClient } from '@prisma/client-user';
 import { PrismaClient as ConversationPrismaClient } from '@prisma/client-conversation';
 import { PrismaClient as KnowledgePrismaClient } from '@prisma/client-knowledge';
 import { PrismaClient as OverflowPrismaClient } from '@prisma/client-overflow';
-import { getDbConnection, isSetupRequired, loadSystemConfigSync, type DbDomain } from './systemConfig';
+import { loadSystemConfigSync } from './systemConfig';
+import { dbUrlFromEnv, isDbSetupRequired, type DbDomain } from './dbEnv';
 
 type LogFlag = 'error' | 'warn' | 'info' | 'query';
 function getLogFlags(): LogFlag[] {
@@ -31,43 +32,25 @@ function getLogFlags(): LogFlag[] {
 
 // Resolve the connection URL for a given domain.
 //
-// 来源已从「部署平台环境变量」改为「后端管理页维护的本地加密文件」
-// （见 services/systemConfig.ts）。原因：环境变量对租户不可见、不可改、
-// 不可审计，换库或换供应商端点必须重新部署。
+// 多数据库混合架构：连接串唯一来源 = 部署环境变量 DATABASE_URL_<DOMAIN>
+// （见 services/dbEnv.ts），启动时直接读取，不在 UI 中暴露或修改。
 //
-// 未配置时**不在模块顶层 throw**——那会让进程起不来，从而永远打不开用来
-// 填连接串的管理页。改为降级为 placeholder + setupRequired 标记，
-// 由 middleware 把所有业务路由挡成 503 setupRequired。
+// 未配置时**不在模块顶层 throw**——那会让进程起不来。改为降级为
+// placeholder + setupRequired 标记，由 middleware 把所有业务路由挡成
+// 503 setupRequired。
 function resolveDbUrl(domain: DbDomain): string {
-  const fromFile = getDbConnection(domain);
-  if (fromFile) return withPoolLimits(fromFile);
+  const v = dbUrlFromEnv(domain);
+  if (v) return withPoolLimits(v);
 
-  // 仅一次性桥接：尚未落盘且环境变量齐全时播种配置，之后环境变量不再读取。
-  // 已部署实例借此免于一次硬停机；这是全项目唯一仍会读到
-  // DATABASE_URL_* 的地方，桥接完成后即可删除这些环境变量。
-  const seeded = seedFromEnvOnce(domain);
-  if (seeded) {
-    console.warn(`[DB] ${domain} 连接串由环境变量一次性播种，稍后可删除该环境变量`);
-    return withPoolLimits(seeded);
-  }
-
-  console.warn(`[DB] ${domain} 未配置 — 进入首次配置模式（setupRequired）`);
+  console.warn(`[DB] ${domain} 未配置 (DATABASE_URL_${domain.toUpperCase()} 缺失) — 使用 placeholder`);
   return PLACEHOLDER_URL;
 }
 
 /** 端口 1 上没有任何东西：被误用会立刻连接失败，而不是静默连错库。 */
 const PLACEHOLDER_URL = 'postgresql://placeholder:placeholder@127.0.0.1:1/placeholder';
 
-function seedFromEnvOnce(domain: DbDomain): string | null {
-  if (!isSetupRequired()) return null;   // 已有配置，绝不回退到环境变量
-  const v = process.env[`DATABASE_URL_${domain.toUpperCase()}`];
-  return v && v.trim() ? v.trim() : null;
-}
-
-/** true 表示尚未配置连接串，业务路由应全部挡下。 */
-export function isDbSetupRequired(): boolean {
-  return isSetupRequired() || !getDbConnection('user');
-}
+// isDbSetupRequired 由 services/dbEnv 纯函数提供（直接读 DATABASE_URL_USER），此处再导出保持对外接口不变。
+export { isDbSetupRequired };
 
 // Layerbase poolers refuse new clients once max_client_conn is reached
 // ("FATAL: no more connections allowed"). Prisma's default pool size is

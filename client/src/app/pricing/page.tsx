@@ -177,7 +177,7 @@ export default function PricingPage() {
           <div className="liquid-glass inline-flex p-1 rounded-capsule">
             <button
               onClick={() => setCycle('monthly')}
-              className={`px-5 py-2 rounded-capsule text-sm font-medium transition-all duration-300 ${
+              className={`px-5 py-2 rounded-capsule text-sm font-medium transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 ${
                 cycle === 'monthly'
                   ? 'bg-accent text-on-accent shadow-card'
                   : 'text-muted hover:text-primary'
@@ -188,7 +188,7 @@ export default function PricingPage() {
             </button>
             <button
               onClick={() => setCycle('yearly')}
-              className={`px-5 py-2 rounded-capsule text-sm font-medium transition-all duration-300 relative ${
+              className={`px-5 py-2 rounded-capsule text-sm font-medium transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 relative ${
                 cycle === 'yearly'
                   ? 'bg-accent text-on-accent shadow-card'
                   : 'text-muted hover:text-primary'
@@ -213,7 +213,7 @@ export default function PricingPage() {
             return (
               <div
                 key={tier.key}
-                className={`relative liquid-glass p-6 flex flex-col transition-all duration-500 ${
+                className={`relative liquid-glass p-6 flex flex-col transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-500 ${
                   isCurrent ? 'border-accent ring-1 ring-accent/30' : ''
                 } ${isBelow ? 'opacity-50' : ''} ${
                   tier.key === 'PRO' ? 'md:scale-[1.04] md:z-10 md:shadow-lg' : ''
@@ -286,7 +286,7 @@ export default function PricingPage() {
                 ) : (
                   <button
                     onClick={() => handlePurchase(tier.key)}
-                    className={`w-full py-3 rounded-card font-medium text-sm transition-all duration-300 ${
+                    className={`w-full py-3 rounded-card font-medium text-sm transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 ${
                       tier.key === 'PRO'
                         ? 'bg-accent text-on-accent hover:bg-accent/80 shadow-card'
                         : 'bg-surface-hover/60 text-primary border border-border hover:bg-surface-hover hover:border-accent/30'
@@ -309,7 +309,7 @@ export default function PricingPage() {
               <button
                 key={tier.key}
                 onClick={() => setActiveTab(i)}
-                className={`px-4 py-1.5 rounded-capsule text-xs font-medium transition-all duration-300 ${
+                className={`px-4 py-1.5 rounded-capsule text-xs font-medium transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 ${
                   activeTab === i
                     ? 'bg-accent text-on-accent'
                     : 'text-muted hover:text-primary'
@@ -407,7 +407,7 @@ export default function PricingPage() {
                   ) : (
                     <button
                       onClick={() => handlePurchase(tier.key)}
-                      className={`w-full py-3 rounded-card font-medium text-sm transition-all duration-300 ${
+                      className={`w-full py-3 rounded-card font-medium text-sm transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 ${
                         tier.key === 'PRO'
                           ? 'bg-accent text-on-accent'
                           : 'bg-surface-hover/60 text-primary border border-border'
@@ -509,7 +509,7 @@ export default function PricingPage() {
                   key={pack.id}
                   onClick={() => handlePurchasePack(pack.id)}
                   disabled={purchasingPack === pack.id}
-                  className="liquid-glass p-4 text-center hover:border-accent/30 transition-all duration-300 group anim-fade-up"
+                  className="liquid-glass p-4 text-center hover:border-accent/30 transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-300 group anim-fade-up"
                   style={{ animationDelay: `${0.4 + i * 0.05}s`, opacity: 0 }}
                 >
                   <div className="text-lg font-display font-bold text-primary group-hover:text-accent transition-colors">

@@ -17,7 +17,7 @@ let inFlight = 0;
 // Job queues share one pool and one global concurrency limit:
 // research, organization, evolution, refresh, skill-analysis (S1) and
 // M-series model-profile jobs (M1-M6).
-type JobKind = 'research' | 'organization' | 'evolution' | 'refresh' | 'skillAnalysis' | 'modelProfile' | 'contextCompression';
+type JobKind = 'research' | 'organization' | 'evolution' | 'refresh' | 'skillAnalysis' | 'modelProfile' | 'contextCompression' | 'rsi';
 export type { JobKind };
 type JobExecutor = (job: any) => Promise<void>;
 let researchExecutor: JobExecutor = async (job) => {
@@ -49,6 +49,11 @@ let modelProfileExecutor: JobExecutor = async (job) => {
 let contextCompressionExecutor: JobExecutor = async (job) => {
   const mod = await import('./contextMemory/compressionWorker');
   await mod.runCompressionJob(job.id);
+};
+// Controlled-RSI queue: signal scan / candidate run / rollout check.
+let rsiExecutor: JobExecutor = async (job) => {
+  const mod = await import('./rsi/worker');
+  await mod.executeRsiJob(job.id);
 };
 
 async function executeResearchJobInternal(jobId: string): Promise<void> {
@@ -102,6 +107,10 @@ export function setModelProfileJobExecutor(executor: JobExecutor): void {
 
 export function setContextCompressionJobExecutor(executor: JobExecutor): void {
   contextCompressionExecutor = executor;
+}
+
+export function setRsiJobExecutor(executor: JobExecutor): void {
+  rsiExecutor = executor;
 }
 
 function workerName(): string {
@@ -239,6 +248,23 @@ async function claimNextJob(): Promise<{ job: any; kind: JobKind } | null> {
 
   // Context-compression jobs claim after model-profile so memory
   // maintenance never starves the AI worker queues.
+  // Controlled-RSI queue. Claimed last so RSI work can never starve the
+  // chat-facing or evolution queues; paused globally it still yields nothing.
+  const rsi = await prismaUser.rsiJob.findFirst({
+    where: { status: 'QUEUED' },
+    orderBy: [{ priority: 'asc' }, { queuedAt: 'asc' }],
+    take: 1,
+  });
+  if (rsi) {
+    const claimed = await prismaUser.rsiJob.updateMany({
+      where: { id: rsi.id, status: 'QUEUED' },
+      data: { status: 'RUNNING', workerId: workerName(), heartbeatAt: now, leaseUntil, startedAt: rsi.startedAt ?? now },
+    });
+    if (claimed.count === 0) return null;
+    const job = await prismaUser.rsiJob.findUnique({ where: { id: rsi.id } });
+    return { job, kind: 'rsi' };
+  }
+
   const cc = await prismaUser.contextCompressionJob.findFirst({
     where: { status: 'QUEUED' },
     orderBy: [{ queuedAt: 'asc' }],
@@ -274,6 +300,8 @@ export async function heartbeat(jobId: string, kind: JobKind): Promise<void> {
     await prismaUser.skillAnalysisJob.updateMany({ where: { id: jobId, status: 'RUNNING' }, data: { updatedAt: now } });
   } else if (kind === 'modelProfile') {
     await prismaUser.modelProfileJob.updateMany({ where: { id: jobId, status: 'RUNNING' }, data });
+  } else if (kind === 'rsi') {
+    await prismaUser.rsiJob.updateMany({ where: { id: jobId, status: 'RUNNING' }, data });
   } else if (kind === 'contextCompression') {
     await prismaUser.contextCompressionJob.updateMany({ where: { id: jobId, status: 'RUNNING' }, data: { updatedAt: now } });
   } else {
@@ -283,13 +311,14 @@ export async function heartbeat(jobId: string, kind: JobKind): Promise<void> {
 
 export async function recoverStaleJobs(): Promise<number> {
   const now = new Date();
-  const [staleResearch, staleOrg, staleEvolution, staleRefresh, staleModelProfile, staleContextCompression] = await Promise.all([
+  const [staleResearch, staleOrg, staleEvolution, staleRefresh, staleModelProfile, staleContextCompression, staleRsi] = await Promise.all([
     prismaUser.researchJob.findMany({ where: { status: 'RUNNING', leaseUntil: { lt: now } } }),
     prismaUser.organizationJob.findMany({ where: { status: 'RUNNING', leaseUntil: { lt: now } } }),
     prismaUser.evolutionJob.findMany({ where: { status: 'RUNNING', leaseUntil: { lt: now } } }),
     prismaUser.refreshTask.findMany({ where: { status: 'RUNNING', leaseUntil: { lt: now } } }),
     prismaUser.modelProfileJob.findMany({ where: { status: 'RUNNING', leaseUntil: { lt: now } } }),
     prismaUser.contextCompressionJob.findMany({ where: { status: 'RUNNING', leaseUntil: { lt: now } } }),
+    prismaUser.rsiJob.findMany({ where: { status: 'RUNNING', leaseUntil: { lt: now } } }),
   ]);
 
   for (const job of staleResearch) {
@@ -328,8 +357,14 @@ export async function recoverStaleJobs(): Promise<number> {
       data: { status: 'QUEUED', workerId: null, leaseUntil: null, queuedAt: now },
     });
   }
+  for (const job of staleRsi) {
+    await prismaUser.rsiJob.update({
+      where: { id: job.id },
+      data: { status: 'QUEUED', workerId: null, leaseUntil: null, queuedAt: now },
+    });
+  }
 
-  const total = staleResearch.length + staleOrg.length + staleEvolution.length + staleRefresh.length + staleModelProfile.length + staleContextCompression.length;
+  const total = staleResearch.length + staleOrg.length + staleEvolution.length + staleRefresh.length + staleModelProfile.length + staleContextCompression.length + staleRsi.length;
   if (total > 0) {
     console.log(`[WorkerPool] recovered ${total} stale job(s)`);
   }
@@ -344,6 +379,7 @@ async function executeJob(job: any, kind: JobKind): Promise<void> {
     kind === 'skillAnalysis' ? skillAnalysisExecutor :
     kind === 'modelProfile' ? modelProfileExecutor :
     kind === 'contextCompression' ? contextCompressionExecutor :
+    kind === 'rsi' ? rsiExecutor :
     evolutionExecutor;
   const hb = setInterval(() => {
     heartbeat(job.id, kind).catch(() => undefined);
@@ -362,19 +398,20 @@ async function executeJob(job: any, kind: JobKind): Promise<void> {
 }
 
 async function tick(): Promise<void> {
-  const [researchRunning, orgRunning, evolutionRunning, refreshRunning, s1Running, mpRunning] = await Promise.all([
+  const [researchRunning, orgRunning, evolutionRunning, refreshRunning, s1Running, mpRunning, rsiRunning] = await Promise.all([
     prismaUser.researchJob.count({ where: { status: 'RUNNING', workerId: workerName() } }),
     prismaUser.organizationJob.count({ where: { status: 'RUNNING', workerId: workerName() } }),
     prismaUser.evolutionJob.count({ where: { status: 'RUNNING', workerId: workerName() } }),
     prismaUser.refreshTask.count({ where: { status: 'RUNNING', workerId: workerName() } }),
     prismaUser.skillAnalysisJob.count({ where: { status: 'RUNNING', workerId: workerName() } }),
     prismaUser.modelProfileJob.count({ where: { status: 'RUNNING', workerId: workerName() } }),
+    prismaUser.rsiJob.count({ where: { status: 'RUNNING', workerId: workerName() } }),
   ]);
   // M-series jobs are additionally capped at maxModelProfileConcurrency;
   // clamp their running count so the kind cap is enforced at claim time.
   const running =
     researchRunning + orgRunning + evolutionRunning +
-    refreshRunning + s1Running +
+    refreshRunning + s1Running + rsiRunning +
     Math.min(mpRunning, maxModelProfileConcurrency);
   const slots = Math.max(0, maxConcurrency - running - inFlight);
   if (slots === 0) return;

@@ -28,7 +28,7 @@ const S = (name: string) => console.log('\n' + name);
 const REPO = process.cwd();
 const SCHEMA_DIR = join(REPO, 'prisma');
 
-const SCALAR = /^(String|Int|BigInt|Float|Decimal|Boolean|DateTime|Json|Bytes|Unsupported)$/;
+const SCALAR = /^(String|Int|BigInt|Float|Decimal|Boolean|DateTime|Json|Bytes|Unsupported|TaskStatus|RunStatus|StepStatus|ModelCallRole|ModelTier|RiskLevel|ApprovalState|InputKind|InputState|RuleScope|RuleKind|RuleSource|ArtifactKind|TodoStatus|EventLevel)$/;
 const BLOCK_HDR = /^(model|enum|type|view)\s+(\w+)\s*\{/;
 const BLOCK_END = /^\}/;
 

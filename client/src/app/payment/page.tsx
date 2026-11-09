@@ -152,7 +152,7 @@ function PaymentContent() {
             <div className="grid gap-3">
               {plans.map((plan, i) => (
                 <button key={plan.key} onClick={() => setSelectedPlan(plan.key)}
-                  className={`text-left p-4 rounded-card liquid-glass transition-all duration-200 ${selectedPlan === plan.key ? 'border-accent bg-accent/5' : 'hover:border-accent/25'}`}
+                  className={`text-left p-4 rounded-card liquid-glass transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 ${selectedPlan === plan.key ? 'border-accent bg-accent/5' : 'hover:border-accent/25'}`}
                   style={{ animationDelay: `${i * 0.04}s`, opacity: 0 }}>
                   <div className="flex items-center justify-between">
                     <div>
@@ -171,7 +171,7 @@ function PaymentContent() {
                 <div className="grid grid-cols-2 gap-3">
                   {methods.map(m => (
                     <button key={m.key} onClick={() => setSelectedMethod(m.key)}
-                      className={`p-4 rounded-card liquid-glass text-center transition-all duration-200 ${selectedMethod === m.key ? 'border-accent bg-accent/5' : 'hover:border-accent/25'}`}>
+                      className={`p-4 rounded-card liquid-glass text-center transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 ${selectedMethod === m.key ? 'border-accent bg-accent/5' : 'hover:border-accent/25'}`}>
                       <div className="text-2xl mb-1">{m.icon}</div>
                       <div className="text-sm text-primary">{m.label}</div>
                     </button>
@@ -189,7 +189,7 @@ function PaymentContent() {
 
             {selectedPlan && selectedMethod && (
               <button onClick={handleCreateOrder} disabled={loading}
-                className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-all duration-200 disabled:opacity-50 anim-fade-up">
+                className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 disabled:opacity-50 anim-fade-up">
                 {loading ? '创建中...' : '创建订单'}
               </button>
             )}
@@ -231,7 +231,7 @@ function PaymentContent() {
             </div>
 
             <button onClick={() => setStep('upload')}
-              className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-all">
+              className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-[background-color,border-color,box-shadow,opacity,transform,color]">
               我已完成付款，上传证明
             </button>
 
@@ -265,7 +265,7 @@ function PaymentContent() {
 
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} />
             <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
-              className="w-full py-8 border-2 border-dashed border-border rounded-card hover:border-accent/50 transition-all flex flex-col items-center gap-2">
+              className="w-full py-8 border-2 border-dashed border-border rounded-card hover:border-accent/50 transition-[background-color,border-color,box-shadow,opacity,transform,color] flex flex-col items-center gap-2">
               {uploading ? (
                 <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full anim-spin" />
               ) : (
@@ -316,7 +316,7 @@ function PaymentContent() {
 
             {order?.status === 'PAID' && (
               <button onClick={() => window.location.href = '/chat'}
-                className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-all">
+                className="w-full py-3 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-[background-color,border-color,box-shadow,opacity,transform,color]">
                 开始使用
               </button>
             )}

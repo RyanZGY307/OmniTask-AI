@@ -114,7 +114,7 @@ export default function OfficeConfirmCard({ message }: Props) {
   const canConfirm = pending && !busy && !mediaConfirming && hasContent;
 
   const pill = (active: boolean) =>
-    `px-3 py-1.5 rounded-capsule text-xs liquid-glass liquid-glass-interactive transition-all duration-200 ${active ? 'bg-accent/15 text-accent border border-accent/30' : 'text-muted hover:text-primary border border-transparent'}`;
+    `px-3 py-1.5 rounded-capsule text-xs liquid-glass liquid-glass-interactive transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 ${active ? 'bg-accent/15 text-accent border border-accent/30' : 'text-muted hover:text-primary border border-transparent'}`;
 
   const handleConfirm = async () => {
     if (!canConfirm) return;
@@ -240,7 +240,7 @@ export default function OfficeConfirmCard({ message }: Props) {
             <button
               onClick={handleConfirm}
               disabled={busy || mediaConfirming || !hasContent}
-              className="flex-1 py-2.5 bg-accent text-on-accent text-sm rounded-card hover:bg-accent/90 transition-all duration-200 disabled:opacity-50 anim-hover-scale"
+              className="flex-1 py-2.5 bg-accent text-on-accent text-sm rounded-card hover:bg-accent/90 transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 disabled:opacity-50 anim-hover-scale"
               style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
             >
               {busy ? '生成中…' : '确认生成'}

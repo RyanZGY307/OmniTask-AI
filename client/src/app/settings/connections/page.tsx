@@ -195,7 +195,7 @@ export default function ConnectionsPage() {
               <input type="text" value={repo} onChange={e => setRepo(e.target.value)} placeholder="octocat/hello-world"
                 className="w-full bg-bg/50 border border-border/50 rounded-card px-3 py-2 text-sm text-primary focus:outline-none focus:border-accent/50 transition-colors" />
             </div>
-            <button onClick={connectGithub} disabled={connecting} className="w-full py-2.5 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-all duration-200 disabled:opacity-50">
+            <button onClick={connectGithub} disabled={connecting} className="w-full py-2.5 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 disabled:opacity-50">
               {connecting ? '连接中...' : '连接'}
             </button>
           </div>
@@ -247,7 +247,7 @@ export default function ConnectionsPage() {
               </div>
             ))}
           </div>
-          <button onClick={savePolicy} disabled={saving} className="mt-4 w-full py-2.5 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-all duration-200 disabled:opacity-50">
+          <button onClick={savePolicy} disabled={saving} className="mt-4 w-full py-2.5 bg-accent text-on-accent font-medium rounded-card hover:bg-accent/80 transition-[background-color,border-color,box-shadow,opacity,transform,color] duration-200 disabled:opacity-50">
             {saving ? '保存中...' : '保存策略'}
           </button>
         </section>
