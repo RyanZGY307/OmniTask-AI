@@ -98,7 +98,7 @@ export function computeGroup(g: GroupStats): ComputedGroup {
     ? (g as { latencySamples: number[] }).latencySamples
     : [];
   const legacyTotal = (g as { latencyTotalMs?: number }).latencyTotalMs;
-  const samples = g.samples ?? ((g.successes ?? 0) + (g.failures ?? 0)) ?? 0;
+  const samples = g.samples ?? ((g.successes ?? 0) + (g.failures ?? 0));
   const avg = computeAvg(rawLatency)
     ?? (typeof legacyTotal === 'number' && samples > 0 ? legacyTotal / samples : null);
   return {
