@@ -19,7 +19,7 @@ import { writeAudit } from './audit';
 import { enqueueRsiJob } from './queue';
 import { monitorRollout } from './pipeline';
 import { collectChatMetrics, collectGroup, type GroupStats } from './metrics';
-import { drainSignalBuffer, bufferedSignalCount } from './signalBridge';
+import { bufferSignals, drainSignalBuffer, bufferedSignalCount } from './signalBridge';
 
 const LOCK_KEY = 4829182740; // purge=4829182734，互不冲突
 
@@ -32,19 +32,6 @@ async function withAdvisoryLock<T>(fn: () => Promise<T>): Promise<T | null> {
   }
 }
 
-// ---- DB 故障短时缓冲（有界，非持久）----
-const signalBuffer: RsiSignal[] = [];
-export function bufferSignals(signals: RsiSignal[]): number {
-  for (const s of signals) {
-    if (signalBuffer.length >= SIGNAL_BUFFER_MAX) signalBuffer.shift();
-    signalBuffer.push(s);
-  }
-  return signalBuffer.length;
-}
-export function drainSignalBuffer(): RsiSignal[] {
-  return signalBuffer.splice(0, signalBuffer.length);
-}
-export function bufferedSignalCount(): number { return signalBuffer.length; }
 
 async function fetchTraces(since: Date): Promise<TraceSample[]> {
   return prismaUser.requestTrace.findMany({
@@ -60,16 +47,16 @@ async function fetchTraces(since: Date): Promise<TraceSample[]> {
 /** 扫描最近观测事件与真实请求痕迹，产生 RSI 信号并入队。 */
 export async function scanSignals(lookbackMinutes = 15): Promise<{ bridged: number; enqueued: number; buffered: number }> {
   const since = new Date(Date.now() - lookbackMinutes * 60_000);
-  let obsEvents: Array<{ id: string; kind: string; level?: string; message?: string; domain?: string; createdAt: Date }> = [];
+  let obsEvents: any[] = [];
   let recoveries: Array<{ id: string; kind: string; attemptCount: number; updatedAt: Date }> = [];
   let traces: TraceSample[] = [];
   let dbFailed = false;
   try {
     [obsEvents, recoveries, traces] = await Promise.all([
-      prismaKnowledge.obsEvent.findMany({
+      prismaUser.obsEvent.findMany({
         where: { createdAt: { gte: since } },
         orderBy: { createdAt: 'desc' }, take: 200,
-        select: { id: true, kind: true, level: true, message: true, domain: true, createdAt: true },
+        select: { id: true, kind: true, severity: true, title: true, domain: true, ts: true },
       }),
       prismaUser.rsiJob.findMany({
         where: { status: 'FAILED', updatedAt: { gte: since } },
@@ -87,7 +74,11 @@ export async function scanSignals(lookbackMinutes = 15): Promise<{ bridged: numb
     }];
   }
 
-  const src: BridgeSource = { obsEvents, workerRecoveries: recoveries, traces, now: new Date() };
+  const obsMapped = obsEvents.map((e) => ({
+    id: e.id, kind: e.kind, level: (e as any).level ?? (e as any).severity, message: (e as any).message ?? (e as any).title,
+    domain: e.domain, createdAt: (e as any).createdAt ?? (e as any).ts,
+  }));
+  const src: BridgeSource = { obsEvents: obsMapped, workerRecoveries: recoveries, traces, now: new Date() };
   const signals = bridgeSignals(src);
   if (dbFailed) {
     const n = bufferSignals(signals);

@@ -234,7 +234,7 @@ export async function runSignalToCandidate(input: {
   // 任一组样本不足 30 就不做运行时对照（stage=deterministic），绝不拿同一组自比造绿。
   let runtime: { controlGroup: GroupStats; variantGroup: GroupStats; minSamples: number } | undefined;
   try {
-    const pct = clampInt(process.env.RSI_CANARY_PERCENT || '5', 5, 0, 100);
+    const pct = Math.max(0, Math.min(100, parseInt(process.env.RSI_CANARY_PERCENT || '5', 10) || 5));
     const raw = await collectRawSamples(24);
     if (raw.length >= 60) {
       const { variant, control } = splitByBucket(raw, assetKey, pct);
@@ -326,14 +326,14 @@ export async function monitorRollout(changeId: string, metrics: {
     });
     await releaseVersion(change.assetKey, rv.version);
     await transition(changeId, 'rolled_back');
-    await recordExperience({ candidateId: changeId, assetKey: change.assetKey, outcome: 'rolled_back', metrics: { ...c.metrics, note: 'rolled_back' } });
+    await recordExperience({ candidateId: changeId, assetKey: change.assetKey, outcome: 'rolled_back', metrics: { samples: c.samples, successRate: c.successRate, errorRate: c.errorRate, p95LatencyMs: c.p95LatencyMs, note: 'rolled_back' } });
     await writeAudit({ action: 'canary_rolled_back', candidateId: changeId, scope: change.assetKey, metadata: { version: rv.version, restoredFrom: prev?.version ?? null, reasons } });
     return { outcome: 'rollback', reasons };
   }
   if (decision.outcome === 'promote') {
     await releaseVersion(change.assetKey, change.toVersion);
     await transition(changeId, 'released');
-    await recordExperience({ candidateId: changeId, assetKey: change.assetKey, outcome: 'released', metrics: { ...c.metrics } });
+    await recordExperience({ candidateId: changeId, assetKey: change.assetKey, outcome: 'released', metrics: { samples: c.samples, successRate: c.successRate, errorRate: c.errorRate, p95LatencyMs: c.p95LatencyMs } });
     await writeAudit({ action: 'canary_promoted', candidateId: changeId, scope: change.assetKey, metadata: { version: change.toVersion } });
     return { outcome: 'promote', reasons };
   }

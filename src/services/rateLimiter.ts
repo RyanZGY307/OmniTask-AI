@@ -44,7 +44,7 @@ export interface AcquireInput {
 export interface AcquireResult {
   allowed: boolean;
   /** 拒绝/限流原因（限流时给出实际生效的 RPM，便于调用方排队） */
-  reason?: 'blocked' | 'tpd_limit_rpm' | 'rate_limited';
+  reason?: LimitFailReason;
   effectiveRpm?: number;
 }
 
@@ -286,6 +286,8 @@ function newWindowState(): WindowState {
 export function currentWindowState(): WindowState {
   return newWindowState();
 }
+
+export type LimitFailReason = 'blocked' | 'tpd_limit_rpm' | 'rate_limited' | 'max_parallel';
 
 export function ensureApiScope(provider: string, tier: string, apiKey: string): WindowState {
   const k = `${provider}:${tier}:${apiKey}`;

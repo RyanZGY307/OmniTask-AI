@@ -96,10 +96,10 @@ export function preflightCandidate(c: PreflightCandidate): PreflightResult {
 
 /** 轻量读 ModelConfig（不引入 providerConfig 之外的依赖，避免循环）。 */
 function getModelConfigForCheck(modelKey: string): { enabled: boolean; status: string; capabilities: string } | null {
+  // 闸门职责是限额而非模型启停；这里只做同步内存读取，读不到一律放行（fail-open on check，fail-closed on quota）
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getModelConfig } = require('./providerConfig') as typeof import('./providerConfig');
-    const m = getModelConfig(modelKey);
+    const { getCachedModelConfig } = require('./providerConfig') as { getCachedModelConfig?: (k: string) => any };
+    const m = typeof getCachedModelConfig === 'function' ? getCachedModelConfig(modelKey) : null;
     if (!m) return null;
     return { enabled: m.enabled !== false, status: m.status || 'online', capabilities: m.capabilities || '' };
   } catch { return null; }

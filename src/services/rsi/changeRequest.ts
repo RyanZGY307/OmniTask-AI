@@ -6,6 +6,8 @@ import { prismaKnowledge } from '../db';
 import { canTransition } from './changeState';
 import { type ChangeStatus, type RiskLevel } from './types';
 
+export { canTransition } from './changeState';
+
 export interface CreateChangeInput {
   assetId: string;
   assetKey: string;

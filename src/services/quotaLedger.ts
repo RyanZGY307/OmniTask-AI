@@ -162,7 +162,7 @@ export async function tryAcquireWindow(
     `INSERT INTO "QuotaLedger" ("scopeKey","level","scopeId","windowKind","windowKey","reqCount","tokReserved","tokCommitted","updatedAt")
      VALUES ($1,$2,$3,$4,$5,0,0,0, now())
      ON CONFLICT ("scopeKey") DO NOTHING`,
-    key, scope.level, scope.scopeId, w === 'minute' ? minuteWindowKey(now, tz) : dayWindowKey(now, tz),
+    key, scope.level, scope.scopeId, w === 'minute' ? minuteWindowKey(now) : dayWindowKey(now, tz),
   );
   const col = dim === 'tokMin' || dim === 'dayTokens' ? 'tokReserved' : 'reqCount';
   const res = await p.$executeRawUnsafe(

@@ -8,7 +8,9 @@ export type AuditAction =
   | 'asset_registered' | 'version_created' | 'change_created' | 'change_transitioned'
   | 'approved' | 'rejected' | 'experiment_run' | 'canary_started' | 'canary_promoted'
   | 'canary_rolled_back' | 'released' | 'paused' | 'resumed' | 'signal_bridged'
-  | 'permission_denied' | 'guard_blocked';
+  | 'permission_denied' | 'guard_blocked'
+  | 'auto_approved' | 'signal_buffered' | 'signal_flushed'
+  | 'rsi_provider_config_saved' | 'rsi_provider_config_disabled';
 
 export async function writeAudit(input: {
   action: AuditAction;

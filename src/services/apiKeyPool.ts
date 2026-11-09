@@ -205,7 +205,7 @@ export function acquireFreeSlot(modelKey: string, estTokens = 0): SlotSelection 
             fromModel: modelKey,
             toModel: modelKey,
             reason: `quota_blocked:${lastGate?.reason || 'blocked'}`,
-            remaining: { effectiveRpm: gate.effectiveRpm ?? null },
+            remaining: JSON.stringify({ effectiveRpm: gate.effectiveRpm ?? null }),
           });
         }
         return { provider: conn.provider, tier: 'FREE', key: slot.key, release: gate.release, effectiveRpm: gate.effectiveRpm };

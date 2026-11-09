@@ -153,19 +153,21 @@ function t(name: string, fn: () => void | Promise<void>) {
     check('分流有分布', a !== c || a === c); // 允许碰撞，仅验证函数确定性
     check('0% 无人进灰度', !R.inRollout('user1', 'skill:x', 0));
     check('100% 全进灰度', R.inRollout(String(a), 'skill:x', 100));
+    const mk = (samples: number, successRate: number, errorRate: number, p95LatencyMs: number) =>
+      ({ samples, successRate, errorRate, p95LatencyMs, avgLatencyMs: p95LatencyMs, p95Available: true });
     const good = R.decideOutcome({
-      baseline: { samples: 100, successRate: 0.7, errorRate: 0.2, latencyMs: 1000 },
-      candidate: { samples: 100, successRate: 0.85, errorRate: 0.1, latencyMs: 900 },
+      baseline: mk(100, 0.7, 0.2, 1000),
+      candidate: mk(100, 0.85, 0.1, 900),
     });
     check('达标样本充分→promote', good.outcome === 'promote');
     const bad = R.decideOutcome({
-      baseline: { samples: 100, successRate: 0.8, errorRate: 0.1, latencyMs: 1000 },
-      candidate: { samples: 100, successRate: 0.4, errorRate: 0.5, latencyMs: 3000 },
+      baseline: mk(100, 0.8, 0.1, 1000),
+      candidate: mk(100, 0.4, 0.5, 3000),
     });
     check('明显退化→rollback', bad.outcome === 'rollback');
     const few = R.decideOutcome({
-      baseline: { samples: 100, successRate: 0.7, errorRate: 0.2, latencyMs: 1000 },
-      candidate: { samples: 3, successRate: 0.99, errorRate: 0.01, latencyMs: 100 },
+      baseline: mk(100, 0.7, 0.2, 1000),
+      candidate: mk(3, 0.99, 0.01, 100),
     });
     check('样本不足→hold', few.outcome === 'hold');
   });

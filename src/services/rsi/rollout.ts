@@ -69,7 +69,7 @@ export function decideOutcome(input: RolloutDecisionInput, th = DEFAULT_THRESHOL
   const { baseline: b, candidate: c } = input;
 
   // 指标缺失/NaN/Infinity 一律不得 promote（fail-closed）
-  const nums = [b.samples, c.samples, b.successRate, c.successRate, b.errorRate, c.errorRate, b.latencyMs, c.latencyMs];
+  const nums = [b.samples, c.samples, b.successRate, c.successRate, b.errorRate, c.errorRate, b.p95LatencyMs, c.p95LatencyMs];
   if (!nums.every((n) => Number.isFinite(n))) {
     return { outcome: 'hold', reasons: ['指标缺失或非有限值，判定无效'] };
   }
