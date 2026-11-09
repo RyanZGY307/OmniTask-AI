@@ -47,7 +47,7 @@ export default function RsiAdminPage() {
 
   const load = useCallback(async () => {
     try {
-      const [a, c, p, j, v] = await Promise.all([
+      const [a, c, p, j, v, l] = await Promise.all([
         api<{ assets: AssetRow[] }>('/rsi/assets?limit=200').catch(() => ({ assets: [] })),
         api<{ changes: ChangeRow[] }>('/rsi/changes?limit=100').catch(() => ({ changes: [] })),
         api<{ pauses: PauseRow[] }>('/rsi/pauses').catch(() => ({ pauses: [] as PauseRow[] })),
