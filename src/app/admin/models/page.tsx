@@ -11,8 +11,8 @@
 
 import { useEffect, useState } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
-import { RateLimitEditor, Field } from '../../components/RateLimitEditor';
-import type { RateLimitBlock } from '../../components/RateLimitEditor';
+import { RateLimitEditor, Field } from '../../../components/RateLimitEditor';
+import type { RateLimitBlock } from '../../../components/RateLimitEditor';
 
 type Tier = 'FREE' | 'PRO';
 
