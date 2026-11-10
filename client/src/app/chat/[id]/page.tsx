@@ -1,6 +1,11 @@
-'use client';
-import ChatWindow from '@/components/ChatWindow';
+import ChatPageClient from './ChatPageClient';
 
-export default function ChatConversationPage({ params }: { params: { id: string } }) {
-  return <ChatWindow conversationId={params.id} />;
+export const dynamic = 'force-static';
+export const dynamicParams = false;
+export function generateStaticParams() {
+  return [{ id: '__spa__' }];
+}
+
+export default function Page({ params }: { params: { id: string } }) {
+  return <ChatPageClient id={params.id} />;
 }
