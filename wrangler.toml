@@ -1,0 +1,24 @@
+# OmniTask API — Cloudflare Workers + Containers
+# 部署：在仓库根执行 wrangler deploy（会远程构建根目录 Dockerfile）
+name = "omnitask-api"
+main = "server/src/worker.ts"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 非敏感变量写这里；敏感项用 wrangler secret put（见部署清单）
+[vars]
+NODE_ENV = "production"
+CLIENT_URL = "https://omnitask.pages.dev"
+
+[[containers]]
+name = "omnitask-api"
+max_instances = 2
+class_name = "OmniTaskAPI"
+
+[[durable_objects.bindings]]
+name = "OMNITASK_API"
+class_name = "OmniTaskAPI"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["OmniTaskAPI"]
