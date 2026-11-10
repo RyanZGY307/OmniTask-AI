@@ -1,0 +1,5 @@
+# Cloudflare Pages SPA fallback：动态路由全部 200 重写到静态占位页，
+# 真实 id 在客户端由 useParams 解析。
+/chat/*          /chat/__spa__          200
+/agent/runs/*    /agent/runs/__spa__    200
+/auth/callback/* /auth/callback/__spa__ 200
