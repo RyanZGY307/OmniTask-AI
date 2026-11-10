@@ -95,14 +95,20 @@ app.get('/health', (_, res) => res.json({ status: 'ok', version: '4.0.0-memory-r
 // 待命连接：带 X-Client-Id 的探测同时登记客户端存活，db.startKeepAlive 据此
 // 把 4 个池的保活从 60s 收紧到 15s；此处再预热提示词快照，让用户闲置几分钟后
 // 发出的第一条消息不必冷查全部已发布 atom。
-async function pingDb(client: any, timeoutMs = 5000): Promise<boolean> {
-  try {
-    await Promise.race([
-      client.$queryRaw`SELECT 1`,
-      new Promise((_, rej) => setTimeout(() => rej(new Error('db-ping-timeout')), timeoutMs)),
-    ]);
-    return true;
-  } catch { return false; }
+async function pingDb(client: any, timeoutMs = 5000, attempts = 8, retryDelayMs = 5000): Promise<boolean> {
+  // pooler 休眠唤醒首连可达 10-30s：单次 5s 超时不够，循环重试约 40s+
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      await Promise.race([
+        client.$queryRaw`SELECT 1`,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('db-ping-timeout')), timeoutMs)),
+      ]);
+      return true;
+    } catch {
+      if (i < attempts) await new Promise((r) => setTimeout(r, retryDelayMs));
+    }
+  }
+  return false;
 }
 
 app.get('/api/health', async (req, res) => {
@@ -193,6 +199,11 @@ async function startup() {
     console.error('[BOOT] FATAL: JWT_SECRET environment variable is required in production');
     process.exit(1);
   }
+
+  // 先监听端口：/health 无条件返回 ok，部署平台健康检查立刻变绿；
+  // 数据库冷启动唤醒（pooler 休眠首连可达 10-30s）在后台进行，
+  // 不再阻塞 listen，避免 "Build took too long and was timed out"。
+  app.listen(env.PORT, () => console.log(`[BOOT] OmniTask server listening on port ${env.PORT} (DB wake in background)`));
 
   console.log('[BOOT] Waking 4 Postgres databases (Layerbase poolers)...');
   const dbOk = await wakeDatabase(5);
@@ -416,7 +427,6 @@ async function startup() {
   listRsiProviders()
     .then((rows) => { primeRsiProviderCache(rows); console.log(`[RSI] provider cache primed rows=${rows.length}`); })
     .catch((err) => console.warn('[BOOT] RSI provider cache prime warning:', err));
-  app.listen(env.PORT, () => console.log(`[BOOT] OmniTask server running on port ${env.PORT}`));
 }
 
 startup();
